@@ -1,0 +1,343 @@
+import os
+import pygame
+
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+from game import GameEngine
+from renderer import render_frame, render_hud, draw_minimap
+from game_types import GamePhase, EnemyState
+
+SCREEN_WIDTH = 960
+SCREEN_HEIGHT = 640
+TARGET_FPS = 60
+
+
+def main():
+    global SCREEN_WIDTH, SCREEN_HEIGHT
+    pygame.init()
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
+    pygame.display.set_caption("DOOM.EVO")
+    clock = pygame.time.Clock()
+
+    engine = None
+    show_menu = True
+    paused = False
+    evolving_timer = 0
+    round_end_timer = 0
+
+    font_large = pygame.font.Font(None, 48)
+    font_med = pygame.font.Font(None, 32)
+    font_small = pygame.font.Font(None, 24)
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+            elif event.type == pygame.KEYDOWN:
+                if show_menu:
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        show_menu = False
+                        engine = GameEngine(round_num=1)
+                        engine.mouse_locked = True
+                        engine.mouse_held = False  # prevent click from carrying over
+                        pygame.event.set_grab(True)
+                        pygame.mouse.set_visible(False)
+                elif engine is not None:
+                    if event.key == pygame.K_ESCAPE:
+                        engine.mouse_locked = False
+                        pygame.event.set_grab(False)
+                        pygame.mouse.set_visible(True)
+                        show_menu = True
+                    elif event.key == pygame.K_p:
+                        paused = not paused
+                        if paused:
+                            engine.mouse_locked = False
+                            pygame.event.set_grab(False)
+                            pygame.mouse.set_visible(True)
+                        else:
+                            engine.mouse_locked = True
+                            pygame.event.set_grab(True)
+                            pygame.mouse.set_visible(False)
+                    elif event.key == pygame.K_p:
+                        paused = not paused
+                        if paused:
+                            engine.mouse_locked = False
+                            pygame.event.set_grab(False)
+                            pygame.mouse.set_visible(True)
+                        else:
+                            engine.mouse_locked = True
+                            pygame.event.set_grab(True)
+                            pygame.mouse.set_visible(False)
+
+            elif event.type == pygame.MOUSEMOTION:
+                if engine is not None and engine.mouse_locked:
+                    engine.mouse_x += event.rel[0]
+
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1 and engine is not None:
+                    engine.mouse_held = True
+
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1 and engine is not None:
+                    engine.mouse_held = False
+
+            elif event.type == pygame.VIDEORESIZE:
+                SCREEN_WIDTH = event.w
+                SCREEN_HEIGHT = event.h
+                screen = pygame.display.set_mode(
+                    (SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE
+                )
+
+        if show_menu:
+            _draw_menu(screen, font_large, font_med, font_small)
+            pygame.display.flip()
+            clock.tick(TARGET_FPS)
+            continue
+
+        if engine is None:
+            continue
+
+        if paused:
+            # Still render the frozen frame + pause overlay
+            surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            render_frame(
+                surface,
+                engine.map,
+                engine.player,
+                engine.enemies,
+                engine.bullets,
+                engine.particles,
+                engine.flash_alpha,
+            )
+            render_hud(
+                surface,
+                engine.player,
+                engine.kill_count,
+                engine.round,
+                engine.score,
+                engine.player.isShooting,
+                engine.shoot_flash,
+                engine.player.isPunching,
+            )
+            draw_minimap(
+                surface,
+                SCREEN_WIDTH,
+                SCREEN_HEIGHT,
+                engine.map,
+                engine.player,
+                engine.enemies,
+            )
+            _draw_pause_overlay(surface, font_large, font_med)
+            screen.blit(
+                pygame.transform.scale(surface, (SCREEN_WIDTH, SCREEN_HEIGHT)), (0, 0)
+            )
+            pygame.display.flip()
+            clock.tick(TARGET_FPS)
+            continue
+
+        # Read keys directly via get_pressed() — no event lag
+        keys = pygame.key.get_pressed()
+        engine.keys["w"] = keys[pygame.K_w]
+        engine.keys["a"] = keys[pygame.K_a]
+        engine.keys["s"] = keys[pygame.K_s]
+        engine.keys["d"] = keys[pygame.K_d]
+        engine.keys["q"] = keys[pygame.K_q]
+        engine.keys["e"] = keys[pygame.K_e]
+        engine.keys["ArrowUp"] = keys[pygame.K_UP]
+        engine.keys["ArrowDown"] = keys[pygame.K_DOWN]
+        engine.keys["ArrowLeft"] = keys[pygame.K_LEFT]
+        engine.keys["ArrowRight"] = keys[pygame.K_RIGHT]
+
+        dt = clock.tick(TARGET_FPS) / 1000.0
+
+        if engine.phase == GamePhase.PLAYING:
+            engine.update(dt)
+        elif engine.phase == GamePhase.ROUND_END:
+            round_end_timer += dt
+            if round_end_timer >= 2.0:
+                engine.phase = GamePhase.EVOLVING
+                evolving_timer = 0
+        elif engine.phase == GamePhase.EVOLVING:
+            evolving_timer += dt
+            if evolving_timer >= 1.5:
+                new_genome_pools = engine.evolve_genomes(engine.round)
+                engine = GameEngine(
+                    round_num=engine.round + 1, existing_genome_pools=new_genome_pools
+                )
+                engine.mouse_locked = True
+                engine.total_kills += engine.kill_count
+                pygame.event.set_grab(True)
+                pygame.mouse.set_visible(False)
+                round_end_timer = 0
+                evolving_timer = 0
+        elif engine.phase == GamePhase.DEAD:
+            pass
+
+        surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        render_frame(
+            surface,
+            engine.map,
+            engine.player,
+            engine.enemies,
+            engine.bullets,
+            engine.particles,
+            engine.flash_alpha,
+        )
+        render_hud(
+            surface,
+            engine.player,
+            engine.kill_count,
+            engine.round,
+            engine.score,
+            engine.player.isShooting,
+            engine.shoot_flash,
+            engine.player.isPunching,
+        )
+        draw_minimap(
+            surface,
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+            engine.map,
+            engine.player,
+            engine.enemies,
+        )
+
+        if engine.phase == GamePhase.ROUND_END:
+            _draw_round_end_overlay(surface, font_large, font_med, engine)
+        elif engine.phase == GamePhase.EVOLVING:
+            _draw_evolving_overlay(surface, font_large, font_med, engine)
+        elif engine.phase == GamePhase.DEAD:
+            _draw_dead_overlay(surface, font_large, font_med, engine)
+
+        screen.blit(
+            pygame.transform.scale(surface, (SCREEN_WIDTH, SCREEN_HEIGHT)), (0, 0)
+        )
+        pygame.display.flip()
+
+    pygame.event.set_grab(False)
+    pygame.mouse.set_visible(True)
+    pygame.quit()
+
+
+def _draw_menu(screen, font_large, font_med, font_small):
+    screen.fill((5, 5, 8))
+
+    title = font_large.render("DOOM.EVO", True, (255, 68, 0))
+    title_rect = title.get_rect(
+        center=(screen.get_width() // 2, screen.get_height() // 3)
+    )
+    screen.blit(title, title_rect)
+
+    subtitle = font_med.render("Neural Network FPS", True, (170, 170, 170))
+    sub_rect = subtitle.get_rect(
+        center=(screen.get_width() // 2, screen.get_height() // 3 + 50)
+    )
+    screen.blit(subtitle, sub_rect)
+
+    prompt = font_small.render("Press ENTER to start", True, (255, 255, 255))
+    prompt_rect = prompt.get_rect(
+        center=(screen.get_width() // 2, screen.get_height() // 2 + 40)
+    )
+    screen.blit(prompt, prompt_rect)
+
+    controls = [
+        "WASD - Move / Strafe",
+        "Mouse - Look",
+        "Left Click / Space - Shoot",
+        "P - Pause",
+        "ESC - Menu",
+    ]
+    for i, text in enumerate(controls):
+        ctrl = font_small.render(text, True, (140, 140, 140))
+        ctrl_rect = ctrl.get_rect(
+            center=(screen.get_width() // 2, screen.get_height() // 2 + 100 + i * 25)
+        )
+        screen.blit(ctrl, ctrl_rect)
+
+
+def _draw_round_end_overlay(surface, font_large, font_med, engine):
+    overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 150))
+    surface.blit(overlay, (0, 0))
+
+    text = font_large.render(f"ROUND {engine.round} COMPLETE", True, (0, 255, 68))
+    rect = text.get_rect(center=(surface.get_width() // 2, surface.get_height() // 3))
+    surface.blit(text, rect)
+
+    info = font_med.render(
+        f"Kills: {engine.kill_count}  Score: {engine.score}", True, (255, 170, 0)
+    )
+    info_rect = info.get_rect(
+        center=(surface.get_width() // 2, surface.get_height() // 3 + 50)
+    )
+    surface.blit(info, info_rect)
+
+
+def _draw_evolving_overlay(surface, font_large, font_med, engine):
+    overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    surface.blit(overlay, (0, 0))
+
+    text = font_large.render("EVOLVING NEXT GENERATION...", True, (255, 68, 0))
+    rect = text.get_rect(center=(surface.get_width() // 2, surface.get_height() // 3))
+    surface.blit(text, rect)
+
+    if engine.generation_history:
+        last = engine.generation_history[-1]
+        info = font_med.render(
+            f"Gen {last.round}: Best={last.bestFitness:.1f}  Avg={last.avgFitness:.1f}",
+            True,
+            (255, 255, 255),
+        )
+        info_rect = info.get_rect(
+            center=(surface.get_width() // 2, surface.get_height() // 3 + 50)
+        )
+        surface.blit(info, info_rect)
+
+
+def _draw_dead_overlay(surface, font_large, font_med, engine):
+    overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    overlay.fill((80, 0, 0, 180))
+    surface.blit(overlay, (0, 0))
+
+    text = font_large.render("YOU DIED", True, (255, 0, 0))
+    rect = text.get_rect(center=(surface.get_width() // 2, surface.get_height() // 3))
+    surface.blit(text, rect)
+
+    info = font_med.render(
+        f"Round: {engine.round}  Kills: {engine.kill_count}  Score: {engine.score}",
+        True,
+        (255, 170, 0),
+    )
+    info_rect = info.get_rect(
+        center=(surface.get_width() // 2, surface.get_height() // 3 + 50)
+    )
+    surface.blit(info, info_rect)
+
+    prompt = font_med.render("Press ESC for menu", True, (200, 200, 200))
+    prompt_rect = prompt.get_rect(
+        center=(surface.get_width() // 2, surface.get_height() // 2 + 40)
+    )
+    surface.blit(prompt, prompt_rect)
+
+
+def _draw_pause_overlay(surface, font_large, font_med):
+    overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 160))
+    surface.blit(overlay, (0, 0))
+
+    text = font_large.render("PAUSED", True, (255, 255, 255))
+    rect = text.get_rect(center=(surface.get_width() // 2, surface.get_height() // 3))
+    surface.blit(text, rect)
+
+    prompt = font_med.render("Press P to resume", True, (200, 200, 200))
+    prompt_rect = prompt.get_rect(
+        center=(surface.get_width() // 2, surface.get_height() // 3 + 50)
+    )
+    surface.blit(prompt, prompt_rect)
+
+
+if __name__ == "__main__":
+    main()
