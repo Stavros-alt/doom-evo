@@ -36,4 +36,4 @@ Enemies are controlled by neural networks (8 inputs -> 12 -> 8 -> 6 outputs). Ea
 
 ## Gameplay Demo
 
-Record a short clip of the neural net enemies learning to hunt you and add the GIF or YouTube link here.
+![Doom Evo Gameplay](doom.gif)
