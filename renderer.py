@@ -11,6 +11,8 @@ from game_types import (
     EnemyState,
     EnemyClass,
     ENEMY_CLASS_CONFIG,
+    Pickup,
+    PickupType,
 )
 
 FOV = math.pi / 3
@@ -53,7 +55,9 @@ def _get_gradient_surf(w, h, top_color, bottom_color):
     return surf
 
 
-def render_frame(surface, game_map, player, enemies, bullets, particles, flash_alpha):
+def render_frame(
+    surface, game_map, player, enemies, bullets, particles, pickups, flash_alpha
+):
     width, height = surface.get_size()
 
     ceil_surf = _get_gradient_surf(width, height // 2, (5, 5, 8), (26, 10, 10))
@@ -108,7 +112,7 @@ def render_frame(surface, game_map, player, enemies, bullets, particles, flash_a
     wall_surf = pygame.surfarray.make_surface(wall_pixels)
     surface.blit(wall_surf, (0, 0))
 
-    _render_sprites(surface, width, height, player, enemies, bullets, z_buffer)
+    _render_sprites(surface, width, height, player, enemies, bullets, pickups, z_buffer)
     _render_particles(surface, width, height, player, particles, z_buffer)
 
     if flash_alpha > 0:
@@ -175,7 +179,9 @@ def _cast_ray(game_map, start_x, start_y, angle):
     }
 
 
-def _render_sprites(surface, width, height, player, enemies, bullets, z_buffer):
+def _render_sprites(
+    surface, width, height, player, enemies, bullets, pickups, z_buffer
+):
     sprites = []
     for e in enemies:
         if e.state == EnemyState.DEAD:
@@ -190,6 +196,14 @@ def _render_sprites(surface, width, height, player, enemies, bullets, z_buffer):
         dy = b.y - player.y
         dist = math.sqrt(dx * dx + dy * dy)
         sprites.append((b, dist, "bullet"))
+
+    for p in pickups:
+        if not p.active:
+            continue
+        dx = p.x - player.x
+        dy = p.y - player.y
+        dist = math.sqrt(dx * dx + dy * dy)
+        sprites.append((p, dist, "pickup"))
 
     sprites.sort(key=lambda s: s[1], reverse=True)
 
@@ -221,6 +235,18 @@ def _render_sprites(surface, width, height, player, enemies, bullets, z_buffer):
 
         if stype == "enemy":
             _draw_enemy_sprite(
+                surface,
+                ref,
+                start_x,
+                sprite_top,
+                sprite_width,
+                sprite_height,
+                corrected_dist,
+                z_buffer,
+                width,
+            )
+        elif stype == "pickup":
+            _draw_pickup_sprite(
                 surface,
                 ref,
                 start_x,
@@ -513,6 +539,86 @@ def _draw_enemy_sprite(
     surface.blit(sprite_surf, (start_col, top))
 
 
+def _draw_pickup_sprite(
+    surface, pickup, start_x, top, w, h, dist, z_buffer, canvas_width
+):
+    fog = min(1, dist / 18)
+    alpha_val = int((1 - fog * 0.5) * 255)
+
+    start_col = max(0, start_x)
+    end_col = min(canvas_width, start_x + int(w))
+    if end_col <= start_col:
+        return
+
+    visible = False
+    for x in range(start_col, end_col):
+        if dist < z_buffer[x]:
+            visible = True
+            break
+    if not visible:
+        return
+
+    sprite_surf = pygame.Surface((end_col - start_col, int(h) + 5), pygame.SRCALPHA)
+
+    surf_w = end_col - start_col
+    surf_h = int(h) + 5
+    center_x = surf_w / 2
+
+    if pickup.pickupType == PickupType.HEALTH:
+        white = (255, 255, 255, alpha_val)
+        red = (255, 0, 0, alpha_val)
+        box_left = int(surf_w * 0.2)
+        box_right = int(surf_w * 0.8)
+        box_top = int(surf_h * 0.2)
+        box_bottom = int(surf_h * 0.8)
+        pygame.draw.rect(
+            sprite_surf,
+            white,
+            (box_left, box_top, box_right - box_left, box_bottom - box_top),
+        )
+        cross_w = max(1, (box_right - box_left) // 5)
+        pygame.draw.rect(
+            sprite_surf,
+            red,
+            (center_x - cross_w // 2, box_top, cross_w, box_bottom - box_top),
+        )
+        pygame.draw.rect(
+            sprite_surf,
+            red,
+            (
+                box_left,
+                (box_top + box_bottom) // 2 - cross_w // 2,
+                box_right - box_left,
+                cross_w,
+            ),
+        )
+    else:
+        ammo_color = (230, 120, 0, alpha_val)
+        inner_color = (255, 180, 50, alpha_val)
+        box_left = int(surf_w * 0.25)
+        box_right = int(surf_w * 0.75)
+        box_top = int(surf_h * 0.25)
+        box_bottom = int(surf_h * 0.75)
+        pygame.draw.rect(
+            sprite_surf,
+            ammo_color,
+            (box_left, box_top, box_right - box_left, box_bottom - box_top),
+        )
+        inner_pad = 3
+        pygame.draw.rect(
+            sprite_surf,
+            inner_color,
+            (
+                box_left + inner_pad,
+                box_top + inner_pad,
+                box_right - box_left - inner_pad * 2,
+                box_bottom - box_top - inner_pad * 2,
+            ),
+        )
+
+    surface.blit(sprite_surf, (start_col, top))
+
+
 def _render_particles(surface, width, height, player, particles, z_buffer):
     if not particles:
         return
@@ -560,6 +666,7 @@ def render_hud(
     is_shooting,
     shoot_flash,
     is_punching=False,
+    money=0,
 ):
     width, height = surface.get_size()
 
@@ -593,6 +700,16 @@ def render_hud(
     ammo_text = font.render(f"AMMO: {player.ammo}", True, (255, 255, 255))
     surface.blit(ammo_text, (28, height - 22))
 
+    if player.armor > 0:
+        armor_text = font.render(f"ARMOR: {player.armor}", True, (100, 150, 255))
+        surface.blit(armor_text, (190, height - 46))
+
+    weapon_name = (
+        player.weaponType.upper() if player.weaponType != "default" else "PISTOL"
+    )
+    weapon_text = font.render(f"WEAPON: {weapon_name}", True, (255, 136, 0))
+    surface.blit(weapon_text, (190, height - 22))
+
     font_bold = _get_font(28)
     round_text = font_bold.render(f"ROUND: {round_num}", True, (255, 68, 0))
     surface.blit(round_text, (width // 2 - 60, height - 55))
@@ -602,6 +719,10 @@ def render_hud(
 
     kill_text = font_bold.render(f"KILLS: {kill_count}", True, (255, 102, 0))
     surface.blit(kill_text, (width // 2 - 60, height - 15))
+
+    if money > 0:
+        money_text = font_bold.render(f"${money}", True, (255, 221, 68))
+        surface.blit(money_text, (width - 100, height - 55))
 
     cx = width // 2
     cy = height // 2

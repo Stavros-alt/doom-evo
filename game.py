@@ -43,30 +43,60 @@ PUNCH_DAMAGE = 25
 PUNCH_RANGE = 1.5
 PUNCH_COOLDOWN = 0.4
 
+WEAPON_COOLDOWNS = {
+    "default": 0.25,
+    "rapid": 0.12,
+    "spread": 0.5,
+}
+WEAPON_DAMAGE = {
+    "default": 35,
+    "rapid": 20,
+    "spread": 25,
+}
+WEAPON_SPREAD = {
+    "default": 1,
+    "rapid": 1,
+    "spread": 5,
+}
+
 _bullet_id_counter = 0
 _enemy_id_counter = 0
 
 
 class GameEngine:
-    def __init__(self, round_num, existing_genome_pools=None):
+    def __init__(self, round_num, existing_genome_pools=None, player_upgrades=None):
         global _bullet_id_counter, _enemy_id_counter
 
         self.map = generate_map(52, 52)
+
+        upgrades = player_upgrades or {}
+        base_hp = upgrades.get("maxHealth", 100)
+        base_speed = upgrades.get("maxSpeed", 3.5)
+        base_ammo = upgrades.get("maxAmmo", 80)
+        armor = upgrades.get("armor", 0)
+        weapon = upgrades.get("weapon", "default")
+        weapon_lvl = upgrades.get("weaponLevel", 1)
 
         self.player = Player(
             x=self.map.spawnX,
             y=self.map.spawnY,
             angle=random.random() * math.pi * 2,
-            health=100,
-            maxHealth=100,
-            ammo=80,
-            maxAmmo=80,
-            speed=3.5,
+            health=base_hp,
+            maxHealth=base_hp,
+            ammo=base_ammo,
+            maxAmmo=base_ammo,
+            speed=base_speed,
             turnSpeed=2.5,
             isShooting=False,
             isPunching=False,
             shootCooldown=0,
             punchCooldown=0,
+            armor=armor,
+            weaponType=weapon,
+            weaponLevel=weapon_lvl,
+            baseSpeed=base_speed,
+            baseMaxHealth=base_hp,
+            baseMaxAmmo=base_ammo,
         )
 
         # Genome pools: {"tank": [g1, g2, g3], "scout": [g4, g5, g6]}
@@ -93,6 +123,7 @@ class GameEngine:
 
         self.bullets = []
         self.particles = []
+        self.money = 0
         self.keys = {}
         self.mouse_x = 0
         self.mouse_held = False
@@ -189,7 +220,7 @@ class GameEngine:
             _enemy_id_counter += 1
 
     def _spawn_pickups(self):
-        positions = generate_pickup_positions(self.map, 4)
+        positions = generate_pickup_positions(self.map, 4, min_dist_from_spawn=5.0)
         pickup_types = [
             PickupType.HEALTH,
             PickupType.HEALTH,
@@ -299,23 +330,38 @@ class GameEngine:
             and player.ammo > 0
         ):
             player.isShooting = True
-            player.shootCooldown = PLAYER_SHOOT_COOLDOWN
+            weapon_key = (
+                player.weaponType
+                if player.weaponType in WEAPON_COOLDOWNS
+                else "default"
+            )
+            player.shootCooldown = WEAPON_COOLDOWNS[weapon_key]
             player.ammo -= 1
             self.shoot_flash = 1
 
-            self.bullets.append(
-                Bullet(
-                    id=_bullet_id_counter,
-                    x=player.x,
-                    y=player.y,
-                    angle=player.angle,
-                    speed=BULLET_SPEED,
-                    damage=PLAYER_BULLET_DAMAGE,
-                    fromPlayer=True,
-                    life=2.0,
+            num_bullets = WEAPON_SPREAD[weapon_key]
+            base_angle = player.angle
+            base_damage = WEAPON_DAMAGE[weapon_key]
+
+            for i in range(num_bullets):
+                spread = 0
+                if num_bullets > 1:
+                    spread = (i - (num_bullets - 1) / 2) * 0.08
+                angle = base_angle + spread
+
+                self.bullets.append(
+                    Bullet(
+                        id=_bullet_id_counter,
+                        x=player.x,
+                        y=player.y,
+                        angle=angle,
+                        speed=BULLET_SPEED,
+                        damage=base_damage,
+                        fromPlayer=True,
+                        life=2.0,
+                    )
                 )
-            )
-            _bullet_id_counter += 1
+                _bullet_id_counter += 1
 
             self._spawn_muzzle_particles(player.x, player.y, player.angle)
         elif (
@@ -347,6 +393,7 @@ class GameEngine:
                         enemy.state = EnemyState.DEAD
                         self.kill_count += 1
                         self.score += 100 * self.round
+                        self.money += max(1, int(self.round * 1.5))
                         self._spawn_death_particles(enemy.x, enemy.y)
 
                         fi = next(
@@ -600,6 +647,9 @@ class GameEngine:
                             enemy.state = EnemyState.DEAD
                             self.kill_count += 1
                             self.score += 100 * self.round
+                            self.money += max(
+                                1, int((self.score / 10) * (self.round * 0.2))
+                            )
                             self._spawn_death_particles(enemy.x, enemy.y)
 
                             fi = next(
@@ -618,7 +668,12 @@ class GameEngine:
                 dx = player.x - b.x
                 dy = player.y - b.y
                 if dx * dx + dy * dy < 0.5:
-                    player.health -= b.damage
+                    damage = b.damage
+                    armor = player.armor
+                    if armor > 0:
+                        reduction = min(armor * 0.1, 0.8)
+                        damage = int(damage * (1 - reduction))
+                    player.health -= damage
                     self.flash_alpha = min(1, self.flash_alpha + 0.3)
                     hit = True
 

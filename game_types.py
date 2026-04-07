@@ -20,6 +20,7 @@ class GamePhase(Enum):
     DEAD = "dead"
     ROUND_END = "roundEnd"
     EVOLVING = "evolving"
+    SHOP = "shop"
 
 
 class EnemyClass(Enum):
@@ -31,6 +32,21 @@ class EnemyClass(Enum):
 class PickupType(Enum):
     HEALTH = "health"
     AMMO = "ammo"
+
+
+class ShopPhase(Enum):
+    NONE = "none"
+    SHOP = "shop"
+    UPGRADE = "upgrade"
+
+
+class ShopItemType(Enum):
+    MAX_HEALTH = "max_health"
+    MAX_SPEED = "max_speed"
+    ARMOR = "armor"
+    WEAPON_RAPID = "weapon_rapid"
+    WEAPON_SPREAD = "weapon_spread"
+    REVIVE = "revive"
 
 
 @dataclass
@@ -64,6 +80,12 @@ class Player:
     isPunching: bool
     shootCooldown: float
     punchCooldown: float
+    armor: int = 0
+    weaponType: str = "default"
+    weaponLevel: int = 1
+    baseSpeed: float = 3.5
+    baseMaxHealth: int = 100
+    baseMaxAmmo: int = 80
 
 
 @dataclass
