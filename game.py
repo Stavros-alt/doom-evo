@@ -51,7 +51,7 @@ WEAPON_COOLDOWNS = {
 WEAPON_DAMAGE = {
     "default": 35,
     "rapid": 20,
-    "spread": 25,
+    "spread": 50,
 }
 WEAPON_SPREAD = {
     "default": 1,
@@ -83,8 +83,8 @@ class GameEngine:
             angle=random.random() * math.pi * 2,
             health=base_hp,
             maxHealth=base_hp,
-            ammo=base_ammo,
-            maxAmmo=base_ammo,
+            ammo=60,
+            maxAmmo=9999,
             speed=base_speed,
             turnSpeed=2.5,
             isShooting=False,
@@ -132,8 +132,6 @@ class GameEngine:
         self.shoot_flash = 0
         self.round = round_num
         self.score = 0
-        self.kill_count = 0
-        self.total_kills = 0
 
         # Fitness and damage tracked per enemy index
         num_enemies = len(self.enemies)
@@ -391,7 +389,6 @@ class GameEngine:
 
                     if enemy.health <= 0:
                         enemy.state = EnemyState.DEAD
-                        self.kill_count += 1
                         self.score += 100 * self.round
                         self.money += max(1, int(self.round * 1.5))
                         self._spawn_death_particles(enemy.x, enemy.y)
@@ -600,14 +597,64 @@ class GameEngine:
         ny = enemy.y + vy
         sign_vx = 1 if vx > 0 else (-1 if vx < 0 else 0)
         sign_vy = 1 if vy > 0 else (-1 if vy < 0 else 0)
+        moved = False
         if is_walkable(game_map, nx + sign_vx * margin, enemy.y):
             enemy.x = nx
+            moved = True
         else:
-            enemy.angle += 0.3
+            # Try small angle adjustments
+            for angle_adj in [0.1, -0.1, 0.2, -0.2, 0.3, -0.3]:
+                test_angle = enemy.angle + angle_adj
+                test_vx = math.cos(test_angle) * forward_amount + perp_x * strafe_amount
+                test_nx = enemy.x + test_vx
+                if is_walkable(game_map, test_nx + sign_vx * margin, enemy.y):
+                    enemy.x = test_nx
+                    enemy.angle = test_angle
+                    moved = True
+                    break
+            if not moved:
+                # Back off and try again
+                back_vx = -vx * 0.5
+                back_nx = enemy.x + back_vx
+                if is_walkable(game_map, back_nx + sign_vx * margin, enemy.y):
+                    enemy.x = back_nx
+                    moved = True
+                else:
+                    # Force random direction
+                    enemy.angle += (random.random() - 0.5) * 1.0
+
         if is_walkable(game_map, enemy.x, ny + sign_vy * margin):
             enemy.y = ny
+            moved = True
         else:
-            enemy.angle -= 0.3
+            # Similar for y
+            for angle_adj in [0.1, -0.1, 0.2, -0.2, 0.3, -0.3]:
+                test_angle = enemy.angle + angle_adj
+                test_vy = math.sin(test_angle) * forward_amount + perp_y * strafe_amount
+                test_ny = enemy.y + test_vy
+                if is_walkable(game_map, enemy.x, test_ny + sign_vy * margin):
+                    enemy.y = test_ny
+                    enemy.angle = test_angle
+                    moved = True
+                    break
+            if not moved:
+                back_vy = -vy * 0.5
+                back_ny = enemy.y + back_vy
+                if is_walkable(game_map, enemy.x, back_ny + sign_vy * margin):
+                    enemy.y = back_ny
+                    moved = True
+                else:
+                    enemy.angle += (random.random() - 0.5) * 1.0
+
+        # Stuck detection
+        if hasattr(enemy, "stuck_counter"):
+            enemy.stuck_counter += 0 if moved else 1
+            if enemy.stuck_counter > 5:
+                # Force strafe or random
+                enemy.angle += random.random() * 2 * math.pi
+                enemy.stuck_counter = 0
+        else:
+            enemy.stuck_counter = 0 if moved else 1
 
     def _update_bullets(self, dt):
         bullets = self.bullets
@@ -645,7 +692,6 @@ class GameEngine:
 
                         if enemy.health <= 0:
                             enemy.state = EnemyState.DEAD
-                            self.kill_count += 1
                             self.score += 100 * self.round
                             self.money += max(
                                 1, int((self.score / 10) * (self.round * 0.2))

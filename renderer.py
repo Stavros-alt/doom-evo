@@ -660,7 +660,6 @@ def _render_particles(surface, width, height, player, particles, z_buffer):
 def render_hud(
     surface,
     player,
-    kill_count,
     round_num,
     score,
     is_shooting,
@@ -716,9 +715,6 @@ def render_hud(
 
     score_text = font_bold.render(f"SCORE: {score}", True, (255, 170, 0))
     surface.blit(score_text, (width // 2 - 60, height - 35))
-
-    kill_text = font_bold.render(f"KILLS: {kill_count}", True, (255, 102, 0))
-    surface.blit(kill_text, (width // 2 - 60, height - 15))
 
     if money > 0:
         money_text = font_bold.render(f"${money}", True, (255, 221, 68))
