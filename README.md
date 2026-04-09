@@ -1,6 +1,6 @@
 # DOOM.EVO
 
-A first-person shooter where enemies are driven by neural networks that evolve across rounds using a genetic algorithm.
+A first-person shooter with evolving neural network enemies.
 
 ## Requirements
 
@@ -22,18 +22,6 @@ python main.py
 
 ## Controls
 
-| Key | Action |
-|-----|--------|
-| WASD | Move / Strafe |
-| Mouse | Look |
-| Left Click / Space | Shoot |
-| P | Pause |
-| ESC | Menu |
+WASD: Move/Strafe, Mouse: Look, Left Click/Space: Shoot, P: Pause, ESC: Menu.
 
-## How It Works
-
-Enemies are controlled by neural networks (8 inputs -> 12 -> 8 -> 6 outputs). Each round, the best-performing genomes are selected, crossed over, and mutated for the next generation. Over time, enemies learn to hunt more effectively.
-
-## Gameplay Demo
-
-![Doom Evo Gameplay](doom.gif)
+Enemies evolve via genetic algorithm each round.

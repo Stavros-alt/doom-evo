@@ -126,6 +126,7 @@ class Enemy:
     reactionTimer: float
     flankAngle: float
     stuckTimer: float
+    recent_positions: List = field(default_factory=list)
 
 
 @dataclass
@@ -183,8 +184,8 @@ ENEMY_CLASS_CONFIG = {
     EnemyClass.TANK: {
         "hp": 200,
         "speed": 1.2,
-        "damage": 30,
-        "shootCooldown": 2.0,
+        "damage": 35,
+        "shootCooldown": 1.5,
         "accuracy": 0.3,
         "minimapColor": (255, 34, 0),
     },
@@ -200,18 +201,19 @@ ENEMY_CLASS_CONFIG = {
 
 CLASS_GENOME_KEYS = ["tank", "scout"]
 
-POPULATION_SIZE = 3
+POPULATION_SIZE = 5
 ELITE_COUNT = 1
-MUTATION_RATE_BASE = 0.05
-MUTATION_SCALE_BASE = 0.3
+MUTATION_RATE_BASE = 0.08
+MUTATION_SCALE_BASE = 0.4
 
-LAYER_SIZES = [8, 12, 8, 6]
+LAYER_SIZES = [8, 16, 12, 8, 6]
 
 
 def get_genome_size() -> int:
     size = 0
     for l in range(1, len(LAYER_SIZES)):
         size += LAYER_SIZES[l] * (LAYER_SIZES[l - 1] + 1)
+    size += 4  # attributes
     return size
 
 

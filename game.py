@@ -34,6 +34,9 @@ from neural import (
     evolve_population,
     dampen_outputs,
     mutate,
+    crossover,
+    get_attributes_from_genome,
+    _tournament_select,
 )
 
 BULLET_SPEED = 20
@@ -46,12 +49,12 @@ PUNCH_COOLDOWN = 0.4
 WEAPON_COOLDOWNS = {
     "default": 0.25,
     "rapid": 0.12,
-    "spread": 0.5,
+    "spread": 0.7,
 }
 WEAPON_DAMAGE = {
     "default": 35,
     "rapid": 20,
-    "spread": 50,
+    "spread": 30,
 }
 WEAPON_SPREAD = {
     "default": 1,
@@ -115,6 +118,8 @@ class GameEngine:
                 for key in CLASS_GENOME_KEYS
             }
 
+        self.round = round_num
+
         self.enemies = []
         self._spawn_enemies()
 
@@ -130,7 +135,6 @@ class GameEngine:
         self.mouse_locked = False
         self.flash_alpha = 0
         self.shoot_flash = 0
-        self.round = round_num
         self.score = 0
 
         # Fitness and damage tracked per enemy index
@@ -153,6 +157,9 @@ class GameEngine:
             EnemyClass.SCOUT,
             EnemyClass.SCOUT,
         ]
+        extra_enemies = max(0, self.round - 3) * 2
+        for _ in range(extra_enemies):
+            enemy_classes.append(random.choice([EnemyClass.TANK, EnemyClass.SCOUT]))
 
         spawn_points = list(self.map.enemySpawns)
         while len(spawn_points) < len(enemy_classes):
@@ -181,6 +188,7 @@ class GameEngine:
             ]
 
             config = ENEMY_CLASS_CONFIG[eclass]
+            attrs = get_attributes_from_genome(genome)
 
             self.enemies.append(
                 Enemy(
@@ -188,16 +196,16 @@ class GameEngine:
                     x=ex,
                     y=ey,
                     angle=random.random() * math.pi * 2,
-                    health=config["hp"],
-                    maxHealth=config["hp"],
-                    speed=config["speed"],
+                    health=config["hp"] * attrs["health_mult"],
+                    maxHealth=config["hp"] * attrs["health_mult"],
+                    speed=config["speed"] * attrs["speed_mult"],
                     state=EnemyState.PATROL,
                     enemyClass=eclass,
                     shootCooldown=config["shootCooldown"],
                     shootTimer=random.random() * config["shootCooldown"] * 1.5,
                     alertRadius=12,
                     attackRadius=18,
-                    damage=config["damage"],
+                    damage=config["damage"] * attrs["damage_mult"],
                     brain=genome_to_network(genome),
                     genome=genome,
                     distanceToPlayer=999,
@@ -208,7 +216,7 @@ class GameEngine:
                     dodgeTimer=0,
                     lastKnownPlayerX=ex,
                     lastKnownPlayerY=ey,
-                    accuracy=config["accuracy"],
+                    accuracy=config["accuracy"] * attrs["accuracy_mult"],
                     reactionTime=0.3,
                     reactionTimer=random.random() * 0.5,
                     flankAngle=random.random() * math.pi * 2,
@@ -414,9 +422,7 @@ class GameEngine:
         return 0.0
 
     def _get_stat_multiplier(self):
-        if self.round < 3:
-            return 1.0
-        return 1.0 + (self.round - 3) * 0.15
+        return 1.0 + (self.round - 1) * 0.155
 
     def _update_enemies(self, dt):
         global _bullet_id_counter
@@ -425,7 +431,6 @@ class GameEngine:
         game_map = self.map
         bullets = self.bullets
 
-        dampen = self._get_dampen_factor()
         stat_mult = self._get_stat_multiplier()
 
         for ei, enemy in enumerate(enemies):
@@ -455,8 +460,6 @@ class GameEngine:
             inputs = self._build_nn_inputs(enemy, player)
             outputs = forward_pass(enemy.brain, inputs)
 
-            outputs = dampen_outputs(outputs, dampen)
-
             turn_left = outputs[2]
             turn_right = outputs[3]
             shoot = outputs[4]
@@ -467,28 +470,77 @@ class GameEngine:
             old_x, old_y = enemy.x, enemy.y
             self._move_enemy(enemy, game_map, dt, outputs, player)
 
+            # Position tracking for corner stuck detection
+            enemy.recent_positions.append((enemy.x, enemy.y))
+            if len(enemy.recent_positions) > 20:  # last 20 frames ~0.33s
+                enemy.recent_positions.pop(0)
+
+            # Prevent clipping: if moved into wall, revert position
+            if not is_walkable(game_map, enemy.x, enemy.y):
+                enemy.x = old_x
+                enemy.y = old_y
+                # why do enemies still clip sometimes? this is annoying
+
             # Wall-stuck detection
             moved_dist = math.sqrt((enemy.x - old_x) ** 2 + (enemy.y - old_y) ** 2)
             moving_intent = abs(outputs[0] - outputs[1]) > 0.15
-            if moving_intent and moved_dist < 0.02:
+            min_move_threshold = (
+                0.02 + enemy.speed * dt * 0.3
+            )  # higher threshold for fast enemies
+            if moving_intent and moved_dist < min_move_threshold:
                 enemy.stuckTimer += dt
             else:
                 enemy.stuckTimer = max(0, enemy.stuckTimer - dt * 2)
 
-            if enemy.stuckTimer > 1.0:
-                back_x = enemy.x - math.cos(enemy.angle) * enemy.speed * dt * 1.5
-                back_y = enemy.y - math.sin(enemy.angle) * enemy.speed * dt * 1.5
+            # Corner stuck detection: if not moved far in recent history
+            corner_stuck = False
+            if len(enemy.recent_positions) >= 20:
+                start_pos = enemy.recent_positions[0]
+                end_pos = enemy.recent_positions[-1]
+                total_moved = math.sqrt(
+                    (end_pos[0] - start_pos[0]) ** 2 + (end_pos[1] - start_pos[1]) ** 2
+                )
+                corner_stuck = (
+                    total_moved < 0.5 and moving_intent
+                )  # stuck in small area despite intent
+
+            stuck_threshold = (
+                0.5 if enemy.speed > 3.0 else 1.0
+            )  # faster stuck detection for fast enemies
+            if enemy.stuckTimer > stuck_threshold or corner_stuck:
+                back_dist = enemy.speed * dt * 2.0  # back further
+                back_x = enemy.x - math.cos(enemy.angle) * back_dist
+                back_y = enemy.y - math.sin(enemy.angle) * back_dist
                 if is_walkable(game_map, back_x, back_y):
                     enemy.x = back_x
                     enemy.y = back_y
-                enemy.angle += (1 if random.random() > 0.5 else -1) * math.pi / 2
+                # Try multiple turn options for corners
+                turn_options = [
+                    math.pi / 2,
+                    -math.pi / 2,
+                    math.pi,
+                    math.pi / 4,
+                    -math.pi / 4,
+                ]
+                for turn in turn_options:
+                    test_angle = enemy.angle + turn
+                    test_x = enemy.x + math.cos(test_angle) * enemy.speed * dt
+                    test_y = enemy.y + math.sin(test_angle) * enemy.speed * dt
+                    if is_walkable(game_map, test_x, test_y):
+                        enemy.angle = test_angle
+                        break
+                else:
+                    enemy.angle += random.uniform(
+                        -math.pi, math.pi
+                    )  # random if none work
                 enemy.stuckTimer = 0
+                enemy.recent_positions.clear()  # reset tracking
 
             effective_shoot_cooldown = enemy.shootCooldown
             effective_damage = enemy.damage * stat_mult
             effective_accuracy = min(1.0, enemy.accuracy * stat_mult)
 
-            shoot_threshold = 0.50 if enemy.enemyClass == EnemyClass.SCOUT else 0.55
+            shoot_threshold = 0.45  # lower threshold for more shooting
 
             enemy.shootTimer -= dt
 
@@ -592,18 +644,29 @@ class GameEngine:
         vx = toward_player_x * forward_amount + perp_x * strafe_amount
         vy = toward_player_y * forward_amount + perp_y * strafe_amount
 
-        margin = 0.3
+        margin = 0.5 + enemy.speed * 0.1  # larger margin for fast enemies
         nx = enemy.x + vx
         ny = enemy.y + vy
         sign_vx = 1 if vx > 0 else (-1 if vx < 0 else 0)
         sign_vy = 1 if vy > 0 else (-1 if vy < 0 else 0)
         moved = False
+
+        # Raycast to detect walls ahead
+        look_ahead = 1.0 + enemy.speed * dt * 2  # look ahead further for fast enemies
+        ahead_x = enemy.x + math.cos(enemy.angle) * look_ahead
+        ahead_y = enemy.y + math.sin(enemy.angle) * look_ahead
+        wall_ahead = not has_line_of_sight(game_map, enemy.x, enemy.y, ahead_x, ahead_y)
+
+        if wall_ahead:
+            # Small turn if wall ahead to avoid clipping
+            enemy.angle += random.choice([-0.3, 0.3])
+
         if is_walkable(game_map, nx + sign_vx * margin, enemy.y):
             enemy.x = nx
             moved = True
         else:
-            # Try small angle adjustments
-            for angle_adj in [0.1, -0.1, 0.2, -0.2, 0.3, -0.3]:
+            # Try larger angle adjustments
+            for angle_adj in [0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.8, -0.8]:
                 test_angle = enemy.angle + angle_adj
                 test_vx = math.cos(test_angle) * forward_amount + perp_x * strafe_amount
                 test_nx = enemy.x + test_vx
@@ -613,22 +676,22 @@ class GameEngine:
                     moved = True
                     break
             if not moved:
-                # Back off and try again
-                back_vx = -vx * 0.5
+                # Back off more
+                back_vx = -vx * 0.7
                 back_nx = enemy.x + back_vx
                 if is_walkable(game_map, back_nx + sign_vx * margin, enemy.y):
                     enemy.x = back_nx
                     moved = True
                 else:
-                    # Force random direction
-                    enemy.angle += (random.random() - 0.5) * 1.0
+                    # Force larger random direction
+                    enemy.angle += (random.random() - 0.5) * 2.0
 
         if is_walkable(game_map, enemy.x, ny + sign_vy * margin):
             enemy.y = ny
             moved = True
         else:
             # Similar for y
-            for angle_adj in [0.1, -0.1, 0.2, -0.2, 0.3, -0.3]:
+            for angle_adj in [0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.8, -0.8]:
                 test_angle = enemy.angle + angle_adj
                 test_vy = math.sin(test_angle) * forward_amount + perp_y * strafe_amount
                 test_ny = enemy.y + test_vy
@@ -638,23 +701,20 @@ class GameEngine:
                     moved = True
                     break
             if not moved:
-                back_vy = -vy * 0.5
+                back_vy = -vy * 0.7
                 back_ny = enemy.y + back_vy
                 if is_walkable(game_map, enemy.x, back_ny + sign_vy * margin):
                     enemy.y = back_ny
                     moved = True
                 else:
-                    enemy.angle += (random.random() - 0.5) * 1.0
+                    enemy.angle += (random.random() - 0.5) * 2.0
 
         # Stuck detection
-        if hasattr(enemy, "stuck_counter"):
-            enemy.stuck_counter += 0 if moved else 1
-            if enemy.stuck_counter > 5:
-                # Force strafe or random
-                enemy.angle += random.random() * 2 * math.pi
-                enemy.stuck_counter = 0
-        else:
-            enemy.stuck_counter = 0 if moved else 1
+        enemy.stuckTimer += 0 if moved else dt
+        if enemy.stuckTimer > 2.0:  # More sensitive, 2 seconds
+            # Force random direction
+            enemy.angle += (random.random() - 0.5) * 3.0  # More aggressive
+            enemy.stuckTimer = 0
 
     def _update_bullets(self, dt):
         bullets = self.bullets
@@ -785,6 +845,9 @@ class GameEngine:
         new_pools = {}
 
         for class_key in CLASS_GENOME_KEYS:
+            other_key = "scout" if class_key == "tank" else "tank"
+            other_genomes = self.genome_pools.get(other_key, [])
+
             class_indices = [
                 i for i, e in enumerate(self.enemies) if e.enemyClass.value == class_key
             ]
@@ -801,14 +864,30 @@ class GameEngine:
                 ]
                 continue
 
-            evolved = evolve_population(
-                class_genomes,
-                class_fitnesses,
-                mutation_rate,
-                mutation_scale,
-                ELITE_COUNT,
-            )
-            new_pools[class_key] = evolved
+            # Evolve with occasional cross-breeding
+            paired = [
+                {"genome": g, "fitness": f}
+                for g, f in zip(class_genomes, class_fitnesses)
+            ]
+            paired.sort(key=lambda x: x["fitness"], reverse=True)
+
+            new_pop = []
+            for i in range(min(ELITE_COUNT, len(paired))):
+                new_pop.append(list(paired[i]["genome"]))
+
+            while len(new_pop) < len(class_genomes):
+                p1 = _tournament_select(paired, 3)
+                if random.random() < 0.2 and other_genomes:  # 20% chance cross-breed
+                    p2_genome = random.choice(other_genomes)
+                else:
+                    p2 = _tournament_select(paired, 3)
+                    p2_genome = p2["genome"]
+                child = crossover(p1["genome"], p2_genome)
+                child = mutate(child, mutation_rate, mutation_scale)
+                new_pop.append(child)
+                # cross-breeding might be messing everything up, i don't know
+
+            new_pools[class_key] = new_pop
 
         all_fitnesses = self.fitnesses
         max_fit = max(all_fitnesses) if all_fitnesses else 0

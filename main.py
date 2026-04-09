@@ -199,36 +199,44 @@ def main():
             shop_timer += dt
             if shop_timer >= 0.5:
                 if keys[pygame.K_1]:
-                    if _buy_item(
+                    cost = _buy_item(
                         ShopItemType.MAX_HEALTH, player_upgrades, current_money
-                    ):
-                        current_money -= SHOP_ITEMS[ShopItemType.MAX_HEALTH]["cost"]
+                    )
+                    if cost is not False:
+                        current_money -= cost
                     shop_timer = 0
                 elif keys[pygame.K_2]:
-                    if _buy_item(
+                    cost = _buy_item(
                         ShopItemType.MAX_SPEED, player_upgrades, current_money
-                    ):
-                        current_money -= SHOP_ITEMS[ShopItemType.MAX_SPEED]["cost"]
+                    )
+                    if cost is not False:
+                        current_money -= cost
                     shop_timer = 0
                 elif keys[pygame.K_3]:
-                    if _buy_item(ShopItemType.ARMOR, player_upgrades, current_money):
-                        current_money -= SHOP_ITEMS[ShopItemType.ARMOR]["cost"]
+                    cost = _buy_item(ShopItemType.ARMOR, player_upgrades, current_money)
+                    if cost is not False:
+                        current_money -= cost
                     shop_timer = 0
                 elif keys[pygame.K_4]:
-                    if _buy_item(
+                    cost = _buy_item(
                         ShopItemType.WEAPON_RAPID, player_upgrades, current_money
-                    ):
-                        current_money -= SHOP_ITEMS[ShopItemType.WEAPON_RAPID]["cost"]
+                    )
+                    if cost is not False:
+                        current_money -= cost
                     shop_timer = 0
                 elif keys[pygame.K_5]:
-                    if _buy_item(
+                    cost = _buy_item(
                         ShopItemType.WEAPON_SPREAD, player_upgrades, current_money
-                    ):
-                        current_money -= SHOP_ITEMS[ShopItemType.WEAPON_SPREAD]["cost"]
+                    )
+                    if cost is not False:
+                        current_money -= cost
                     shop_timer = 0
                 elif keys[pygame.K_6]:
-                    if _buy_item(ShopItemType.REVIVE, player_upgrades, current_money):
-                        current_money -= SHOP_ITEMS[ShopItemType.REVIVE]["cost"]
+                    cost = _buy_item(
+                        ShopItemType.REVIVE, player_upgrades, current_money
+                    )
+                    if cost is not False:
+                        current_money -= cost
                     shop_timer = 0
                 elif keys[pygame.K_RETURN]:
                     engine = GameEngine(
@@ -282,7 +290,13 @@ def main():
             _draw_dead_overlay(surface, font_large, font_med, engine)
         elif engine.phase == GamePhase.SHOP:
             _draw_shop_overlay(
-                surface, font_large, font_med, font_small, engine, current_money
+                surface,
+                font_large,
+                font_med,
+                font_small,
+                engine,
+                current_money,
+                player_upgrades,
             )
 
         screen.blit(
@@ -411,7 +425,9 @@ def _draw_pause_overlay(surface, font_large, font_med):
     surface.blit(prompt, prompt_rect)
 
 
-def _draw_shop_overlay(surface, font_large, font_med, font_small, engine, money):
+def _draw_shop_overlay(
+    surface, font_large, font_med, font_small, engine, money, player_upgrades
+):
     overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 200))
     surface.blit(overlay, (0, 0))
@@ -424,10 +440,22 @@ def _draw_shop_overlay(surface, font_large, font_med, font_small, engine, money)
     money_rect = money_text.get_rect(center=(surface.get_width() // 2, 90))
     surface.blit(money_text, money_rect)
 
+    # Calculate dynamic costs
+    max_health_purchases = player_upgrades.get("maxHealthPurchases", 0)
+    max_speed_purchases = player_upgrades.get("maxSpeedPurchases", 0)
+    armor_purchases = player_upgrades.get("armorPurchases", 0)
     shop_items = [
-        ("1", "Max Health +25", 50),
-        ("2", "Speed +0.5", 75),
-        ("3", "Armor +1 (blocks 10%)", 100),
+        (
+            "1",
+            f"Max Health +{15 / (1 + max_health_purchases * 0.5):.1f}",
+            int(100 * (1.5**max_health_purchases)),
+        ),
+        (
+            "2",
+            f"Speed +{0.3 / (1 + max_speed_purchases * 0.5):.2f}",
+            int(150 * (1.5**max_speed_purchases)),
+        ),
+        ("3", "Armor +1 (blocks 10%)", int(200 * (1.5**armor_purchases))),
         ("4", "Rapid SMG", 200),
         ("5", "Heavy Shotgun", 350),
         ("6", "Revive (100 HP)", 500),
@@ -450,35 +478,82 @@ def _draw_shop_overlay(surface, font_large, font_med, font_small, engine, money)
 
 
 def _buy_item(item_type, upgrades, money):
-    item = SHOP_ITEMS[item_type]
-    if money >= item["cost"]:
-        if item_type == ShopItemType.MAX_HEALTH:
-            if upgrades.get("maxHealth", 100) >= 300:
-                return False
-            upgrades["maxHealth"] = upgrades.get("maxHealth", 100) + 25
-        elif item_type == ShopItemType.MAX_SPEED:
-            if upgrades.get("maxSpeed", 3.5) >= 6.0:
-                return False
-            upgrades["maxSpeed"] = upgrades.get("maxSpeed", 3.5) + 0.5
-        elif item_type == ShopItemType.ARMOR:
-            if upgrades.get("armor", 0) >= 5:
-                return False
+    # this function is a mess of ifs, but it works i guess
+    if item_type == ShopItemType.MAX_HEALTH:
+        purchases = upgrades.get("maxHealthPurchases", 0)
+        cost = int(100 * (1.5**purchases))
+        increment = 15 / (1 + purchases * 0.5)
+        if upgrades.get("maxHealth", 100) >= 350:
+            return False
+        if money >= cost:
+            upgrades["maxHealth"] = upgrades.get("maxHealth", 100) + increment
+            upgrades["maxHealthPurchases"] = purchases + 1
+            return cost
+    elif item_type == ShopItemType.MAX_SPEED:
+        purchases = upgrades.get("maxSpeedPurchases", 0)
+        cost = int(150 * (1.5**purchases))
+        increment = 0.3 / (1 + purchases * 0.5)
+        if upgrades.get("maxSpeed", 3.5) >= 6.0:
+            return False
+        if money >= cost:
+            upgrades["maxSpeed"] = upgrades.get("maxSpeed", 3.5) + increment
+            upgrades["maxSpeedPurchases"] = purchases + 1
+            return cost
+    elif item_type == ShopItemType.ARMOR:
+        purchases = upgrades.get("armorPurchases", 0)
+        cost = int(200 * (1.5**purchases))
+        if upgrades.get("armor", 0) >= 5:
+            return False
+        if money >= cost:
             upgrades["armor"] = upgrades.get("armor", 0) + 1
-        elif item_type == ShopItemType.WEAPON_RAPID:
-            if upgrades.get("weapon") == "rapid":
-                return False
+            upgrades["armorPurchases"] = purchases + 1
+            # Weakness: high armor reduces speed
+            upgrades["maxSpeed"] = max(2.0, upgrades.get("maxSpeed", 3.5) - 0.15)
+            return cost
+    elif item_type == ShopItemType.MAX_SPEED:
+        purchases = upgrades.get("maxSpeedPurchases", 0)
+        cost = int(75 * (1.3**purchases))
+        increment = 0.5 / (1 + purchases * 0.5)
+        if upgrades.get("maxSpeed", 3.5) >= 7.0:
+            return False
+        if money >= cost:
+            upgrades["maxSpeed"] = upgrades.get("maxSpeed", 3.5) + increment
+            upgrades["maxSpeedPurchases"] = purchases + 1
+            return cost
+    elif item_type == ShopItemType.ARMOR:
+        purchases = upgrades.get("armorPurchases", 0)
+        cost = int(100 * (1.3**purchases))
+        if upgrades.get("armor", 0) >= 5:
+            return False
+        if money >= cost:
+            upgrades["armor"] = upgrades.get("armor", 0) + 1
+            upgrades["armorPurchases"] = purchases + 1
+            # Weakness: high armor reduces speed
+            upgrades["maxSpeed"] = max(2.0, upgrades.get("maxSpeed", 3.5) - 0.1)
+            return cost
+    elif item_type == ShopItemType.WEAPON_RAPID:
+        if upgrades.get("weapon") == "rapid":
+            return False
+        cost = SHOP_ITEMS[item_type]["cost"]
+        if money >= cost:
             upgrades["weapon"] = "rapid"
             upgrades["weaponLevel"] = upgrades.get("weaponLevel", 1) + 1
-        elif item_type == ShopItemType.WEAPON_SPREAD:
-            if upgrades.get("weapon") == "spread":
-                return False
+            return cost
+    elif item_type == ShopItemType.WEAPON_SPREAD:
+        if upgrades.get("weapon") == "spread":
+            return False
+        cost = SHOP_ITEMS[item_type]["cost"]
+        if money >= cost:
             upgrades["weapon"] = "spread"
             upgrades["weaponLevel"] = upgrades.get("weaponLevel", 1) + 1
-        elif item_type == ShopItemType.REVIVE:
-            if upgrades.get("revive", False):
-                return False
+            return cost
+    elif item_type == ShopItemType.REVIVE:
+        if upgrades.get("revive", False):
+            return False
+        cost = SHOP_ITEMS[item_type]["cost"]
+        if money >= cost:
             upgrades["revive"] = True
-        return True
+            return cost
     return False
 
 

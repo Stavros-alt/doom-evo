@@ -9,6 +9,8 @@ def create_network(genome=None):
     biases = []
     g_idx = 0
     g = genome if genome is not None else random_genome()
+    neural_size = get_genome_size() - 4
+    g = g[:neural_size]  # only neural part
 
     for l in range(1, len(layers)):
         layer_weights = []
@@ -36,6 +38,11 @@ def random_genome():
             for p in range(LAYER_SIZES[l - 1]):
                 genome.append(random.uniform(-1, 1))
             genome.append(random.uniform(-1, 1))
+    # attribute genes: health_mult, speed_mult, damage_mult, accuracy_mult (0-1)
+    genome.append(random.random())
+    genome.append(random.random())
+    genome.append(random.random())
+    genome.append(random.random())
     return genome
 
 
@@ -43,7 +50,26 @@ def get_genome_size():
     size = 0
     for l in range(1, len(LAYER_SIZES)):
         size += LAYER_SIZES[l] * (LAYER_SIZES[l - 1] + 1)
+    size += 4  # attribute genes: health_mult, speed_mult, damage_mult, accuracy_mult
     return size
+
+
+def get_attributes_from_genome(genome):
+    neural_size = get_genome_size() - 4
+    if len(genome) < neural_size + 4:
+        return {
+            "health_mult": 1.0,
+            "speed_mult": 1.0,
+            "damage_mult": 1.0,
+            "accuracy_mult": 1.0,
+        }
+    attrs = genome[neural_size:]
+    return {
+        "health_mult": max(0.1, min(2.0, attrs[0])),
+        "speed_mult": max(0.1, min(2.0, attrs[1])),
+        "damage_mult": max(0.1, min(2.0, attrs[2])),
+        "accuracy_mult": max(0.1, min(2.0, attrs[3])),
+    }
 
 
 def _relu(x):
@@ -122,6 +148,7 @@ def mutate(genome, mutation_rate, mutation_scale):
         else:
             result.append(g)
     return result
+    # mutation rates are all over the place, but whatever
 
 
 def evolve_population(genomes, fitnesses, mutation_rate, mutation_scale, elite_count):
