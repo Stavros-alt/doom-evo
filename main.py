@@ -76,6 +76,17 @@ def main():
                             pygame.event.set_grab(False)
                             pygame.mouse.set_visible(True)
                         elif engine.phase == GamePhase.DEAD or paused:
+                            if engine.phase == GamePhase.DEAD:
+                                # ugh, reset everything on death. why can't it just work?
+                                player_upgrades = {
+                                    "maxHealth": 100,
+                                    "maxSpeed": 3.5,
+                                    "maxAmmo": 80,
+                                    "armor": 0,
+                                    "weapon": "default",
+                                    "weaponLevel": 1,
+                                }
+                                current_money = 0
                             show_menu = True
                             engine = None
                             pygame.event.set_grab(False)
@@ -509,27 +520,6 @@ def _buy_item(item_type, upgrades, money):
             upgrades["armorPurchases"] = purchases + 1
             # Weakness: high armor reduces speed
             upgrades["maxSpeed"] = max(2.0, upgrades.get("maxSpeed", 3.5) - 0.15)
-            return cost
-    elif item_type == ShopItemType.MAX_SPEED:
-        purchases = upgrades.get("maxSpeedPurchases", 0)
-        cost = int(75 * (1.3**purchases))
-        increment = 0.5 / (1 + purchases * 0.5)
-        if upgrades.get("maxSpeed", 3.5) >= 7.0:
-            return False
-        if money >= cost:
-            upgrades["maxSpeed"] = upgrades.get("maxSpeed", 3.5) + increment
-            upgrades["maxSpeedPurchases"] = purchases + 1
-            return cost
-    elif item_type == ShopItemType.ARMOR:
-        purchases = upgrades.get("armorPurchases", 0)
-        cost = int(100 * (1.3**purchases))
-        if upgrades.get("armor", 0) >= 5:
-            return False
-        if money >= cost:
-            upgrades["armor"] = upgrades.get("armor", 0) + 1
-            upgrades["armorPurchases"] = purchases + 1
-            # Weakness: high armor reduces speed
-            upgrades["maxSpeed"] = max(2.0, upgrades.get("maxSpeed", 3.5) - 0.1)
             return cost
     elif item_type == ShopItemType.WEAPON_RAPID:
         if upgrades.get("weapon") == "rapid":

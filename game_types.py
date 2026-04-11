@@ -127,6 +127,7 @@ class Enemy:
     flankAngle: float
     stuckTimer: float
     recent_positions: List = field(default_factory=list)
+    roamTimer: float = 0.0
 
 
 @dataclass

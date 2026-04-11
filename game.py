@@ -203,8 +203,8 @@ class GameEngine:
                     enemyClass=eclass,
                     shootCooldown=config["shootCooldown"],
                     shootTimer=random.random() * config["shootCooldown"] * 1.5,
-                    alertRadius=12,
-                    attackRadius=18,
+                    alertRadius=22,
+                    attackRadius=28,
                     damage=config["damage"] * attrs["damage_mult"],
                     brain=genome_to_network(genome),
                     genome=genome,
@@ -457,42 +457,54 @@ class GameEngine:
                 enemy.lastKnownPlayerX = player.x
                 enemy.lastKnownPlayerY = player.y
 
-            inputs = self._build_nn_inputs(enemy, player)
-            outputs = forward_pass(enemy.brain, inputs)
+            # enemy state, chase or patrol. whatever.
+            if enemy.distanceToPlayer < enemy.alertRadius and enemy.canSeePlayer:
+                enemy.state = EnemyState.CHASE
+            else:
+                enemy.state = EnemyState.PATROL
 
-            turn_left = outputs[2]
-            turn_right = outputs[3]
-            shoot = outputs[4]
+            if enemy.state == EnemyState.CHASE:
+                inputs = self._build_nn_inputs(enemy, player)
+                outputs = forward_pass(enemy.brain, inputs)
 
-            nn_turn_speed = (turn_left - turn_right) * 2.2
-            enemy.angle += nn_turn_speed * dt
+                turn_left = outputs[2]
+                turn_right = outputs[3]
+                shoot = outputs[4]
+
+                nn_turn_speed = (turn_left - turn_right) * 2.2
+                enemy.angle += nn_turn_speed * dt
+            else:
+                outputs = None  # not used for patrol
+                shoot = 0
 
             old_x, old_y = enemy.x, enemy.y
             self._move_enemy(enemy, game_map, dt, outputs, player)
 
-            # Position tracking for corner stuck detection
+            # tracking positions for stuck stuff
             enemy.recent_positions.append((enemy.x, enemy.y))
-            if len(enemy.recent_positions) > 20:  # last 20 frames ~0.33s
+            if len(enemy.recent_positions) > 20:
                 enemy.recent_positions.pop(0)
 
-            # Prevent clipping: if moved into wall, revert position
+            # clipping again? revert.
             if not is_walkable(game_map, enemy.x, enemy.y):
                 enemy.x = old_x
                 enemy.y = old_y
-                # why do enemies still clip sometimes? this is annoying
+                # clipping still happens. ugh.
 
-            # Wall-stuck detection
+            # stuck detection
             moved_dist = math.sqrt((enemy.x - old_x) ** 2 + (enemy.y - old_y) ** 2)
-            moving_intent = abs(outputs[0] - outputs[1]) > 0.15
-            min_move_threshold = (
-                0.02 + enemy.speed * dt * 0.3
-            )  # higher threshold for fast enemies
+            moving_intent = (
+                (abs(outputs[0] - outputs[1]) > 0.15)
+                if outputs
+                else (enemy.state == EnemyState.PATROL)
+            )
+            min_move_threshold = 0.02 + enemy.speed * dt * 0.3
             if moving_intent and moved_dist < min_move_threshold:
                 enemy.stuckTimer += dt
             else:
                 enemy.stuckTimer = max(0, enemy.stuckTimer - dt * 2)
 
-            # Corner stuck detection: if not moved far in recent history
+            # corner stuck
             corner_stuck = False
             if len(enemy.recent_positions) >= 20:
                 start_pos = enemy.recent_positions[0]
@@ -500,21 +512,17 @@ class GameEngine:
                 total_moved = math.sqrt(
                     (end_pos[0] - start_pos[0]) ** 2 + (end_pos[1] - start_pos[1]) ** 2
                 )
-                corner_stuck = (
-                    total_moved < 0.5 and moving_intent
-                )  # stuck in small area despite intent
+                corner_stuck = total_moved < 0.5 and moving_intent
 
-            stuck_threshold = (
-                0.5 if enemy.speed > 3.0 else 1.0
-            )  # faster stuck detection for fast enemies
+            stuck_threshold = 0.3 if enemy.speed > 3.0 else 0.7
             if enemy.stuckTimer > stuck_threshold or corner_stuck:
-                back_dist = enemy.speed * dt * 2.0  # back further
+                back_dist = enemy.speed * dt * 2.0
                 back_x = enemy.x - math.cos(enemy.angle) * back_dist
                 back_y = enemy.y - math.sin(enemy.angle) * back_dist
                 if is_walkable(game_map, back_x, back_y):
                     enemy.x = back_x
                     enemy.y = back_y
-                # Try multiple turn options for corners
+                # turn options for corners
                 turn_options = [
                     math.pi / 2,
                     -math.pi / 2,
@@ -626,23 +634,38 @@ class GameEngine:
         ]
 
     def _move_enemy(self, enemy, game_map, dt, outputs, player):
-        move_forward = outputs[0]
-        move_back = outputs[1]
-        strafe_out = outputs[5]
-
         if enemy.state == EnemyState.DEAD:
             return
 
-        toward_player_x = math.cos(enemy.angleToPlayer)
-        toward_player_y = math.sin(enemy.angleToPlayer)
-        perp_x = -toward_player_y
-        perp_y = toward_player_x
+        if enemy.state == EnemyState.PATROL:
+            enemy.roamTimer += dt
+            if enemy.roamTimer > 2.0:
+                enemy.angle += (random.random() - 0.5) * 0.5
+                enemy.roamTimer = 0.0
+            forward_amount = enemy.speed * dt * 0.5
+            strafe_amount = 0
+            toward_player_x = math.cos(enemy.angle)
+            toward_player_y = math.sin(enemy.angle)
+            perp_x = -toward_player_y
+            perp_y = toward_player_x
+            vx = toward_player_x * forward_amount + perp_x * strafe_amount
+            vy = toward_player_y * forward_amount + perp_y * strafe_amount
+        else:
+            # chasing with nn
+            move_forward = outputs[0]
+            move_back = outputs[1]
+            strafe_out = outputs[5]
 
-        forward_amount = (move_forward - move_back) * enemy.speed * dt
-        strafe_amount = strafe_out * enemy.speed * dt
+            toward_player_x = math.cos(enemy.angleToPlayer)
+            toward_player_y = math.sin(enemy.angleToPlayer)
+            perp_x = -toward_player_y
+            perp_y = toward_player_x
 
-        vx = toward_player_x * forward_amount + perp_x * strafe_amount
-        vy = toward_player_y * forward_amount + perp_y * strafe_amount
+            forward_amount = (move_forward - move_back) * enemy.speed * dt
+            strafe_amount = strafe_out * enemy.speed * dt
+
+            vx = toward_player_x * forward_amount + perp_x * strafe_amount
+            vy = toward_player_y * forward_amount + perp_y * strafe_amount
 
         margin = 0.5 + enemy.speed * 0.1  # larger margin for fast enemies
         nx = enemy.x + vx
@@ -651,14 +674,14 @@ class GameEngine:
         sign_vy = 1 if vy > 0 else (-1 if vy < 0 else 0)
         moved = False
 
-        # Raycast to detect walls ahead
-        look_ahead = 1.0 + enemy.speed * dt * 2  # look ahead further for fast enemies
+        # check for walls ahead
+        look_ahead = 1.0 + enemy.speed * dt * 2
         ahead_x = enemy.x + math.cos(enemy.angle) * look_ahead
         ahead_y = enemy.y + math.sin(enemy.angle) * look_ahead
         wall_ahead = not has_line_of_sight(game_map, enemy.x, enemy.y, ahead_x, ahead_y)
 
         if wall_ahead:
-            # Small turn if wall ahead to avoid clipping
+            # turn a bit to avoid wall
             enemy.angle += random.choice([-0.3, 0.3])
 
         if is_walkable(game_map, nx + sign_vx * margin, enemy.y):
@@ -690,7 +713,7 @@ class GameEngine:
             enemy.y = ny
             moved = True
         else:
-            # Similar for y
+            # same for y
             for angle_adj in [0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.8, -0.8]:
                 test_angle = enemy.angle + angle_adj
                 test_vy = math.sin(test_angle) * forward_amount + perp_y * strafe_amount
