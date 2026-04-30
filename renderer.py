@@ -32,6 +32,7 @@ _floor_cache = {}
 _font_cache = {}
 
 
+# font cache (stupid)
 def _get_font(size):
     if size not in _font_cache:
         _font_cache[size] = pygame.font.Font(None, size)
@@ -56,7 +57,7 @@ def _get_gradient_surf(w, h, top_color, bottom_color):
 
 
 def render_frame(
-    surface, game_map, player, enemies, bullets, particles, pickups, flash_alpha
+    surface, game_map, player, enemies, bullets, particles, pickups, flash_alpha, low_quality=False
 ):
     width, height = surface.get_size()
 
@@ -98,12 +99,16 @@ def render_frame(
         y_end = min(height, int(wall_top + wall_height))
 
         if y_end > y_start:
-            tex_coords = np.linspace(0, 1, y_end - y_start)
-            scanline = (
-                np.sin(tex_coords * 20 + texture_shift + map_x * 3.7 + map_y * 2.3)
-                * 0.05
-            )
-            brightness = (1.0 - fog * 0.6 + scanline) * fog_factor
+            if not low_quality:
+                tex_coords = np.linspace(0, 1, y_end - y_start)
+                scanline = (
+                    np.sin(tex_coords * 20 + texture_shift + map_x * 3.7 + map_y * 2.3)
+                    * 0.05
+                )
+                brightness = (1.0 - fog * 0.6 + scanline) * fog_factor
+            else:
+                brightness = (1.0 - fog * 0.6) * fog_factor
+           # scanlines are expensvie. turn off for bad gpu
             brightness = np.clip(brightness, 0, 1)
             wall_pixels[x, y_start:y_end] = (
                 base_color * brightness[:, np.newaxis]

@@ -12,6 +12,10 @@ SCREEN_WIDTH = 960
 SCREEN_HEIGHT = 640
 TARGET_FPS = 60
 
+LOW_QUALITY = True  # chromebook mode. set to False for better grafics
+INTERNAL_WIDTH = 640  # render resolution for bad computers. change at your own risk
+INTERNAL_HEIGHT = 480
+
 
 SHOP_ITEMS = {
     ShopItemType.MAX_HEALTH: {"name": "Max Health +25", "cost": 50, "key": "1"},
@@ -46,6 +50,7 @@ def main():
     evolving_timer = 0
     round_end_timer = 0
     shop_timer = 0
+    last_minimap_ticks = 0  # this is a hack. dont ask
 
     saved_genome_pools = None
 
@@ -128,8 +133,8 @@ def main():
             continue
 
         if paused:
-            # Still render the frozen frame + pause overlay
-            surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            # ugh, still render the frozen frame + pause overlay
+            surface = pygame.Surface((INTERNAL_WIDTH, INTERNAL_HEIGHT))
             render_frame(
                 surface,
                 engine.map,
@@ -139,6 +144,7 @@ def main():
                 engine.particles,
                 engine.pickups,
                 engine.flash_alpha,
+                LOW_QUALITY,
             )
             render_hud(
                 surface,
@@ -150,17 +156,21 @@ def main():
                 engine.player.isPunching,
                 engine.money,
             )
-            draw_minimap(
-                surface,
-                SCREEN_WIDTH,
-                SCREEN_HEIGHT,
-                engine.map,
-                engine.player,
-                engine.enemies,
-            )
+           # minimap is expensvie. only update sometimes
+            current_ticks = pygame.time.get_ticks()
+            if current_ticks - last_minimap_ticks >= 500:
+               draw_minimap(
+                    surface,
+                    INTERNAL_WIDTH,
+                    INTERNAL_HEIGHT,
+                    engine.map,
+                    engine.player,
+                    engine.enemies,
+               )
+               last_minimap_ticks = current_ticks
             _draw_pause_overlay(surface, font_large, font_med)
             screen.blit(
-                pygame.transform.scale(surface, (SCREEN_WIDTH, SCREEN_HEIGHT)), (0, 0)
+                pygame.transform.scale(surface, (screen.get_width(), screen.get_height())), (0, 0)
             )
             pygame.display.flip()
             clock.tick(TARGET_FPS)
@@ -263,7 +273,7 @@ def main():
         elif engine.phase == GamePhase.DEAD:
             pass
 
-        surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        surface = pygame.Surface((INTERNAL_WIDTH, INTERNAL_HEIGHT))
         render_frame(
             surface,
             engine.map,
@@ -273,6 +283,7 @@ def main():
             engine.particles,
             engine.pickups,
             engine.flash_alpha,
+            LOW_QUALITY,
         )
         render_hud(
             surface,
@@ -284,14 +295,18 @@ def main():
             engine.player.isPunching,
             engine.money,
         )
-        draw_minimap(
-            surface,
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
-            engine.map,
-            engine.player,
-            engine.enemies,
-        )
+        # minimap is expensvie. only update sometimes
+        current_ticks = pygame.time.get_ticks()
+        if current_ticks - last_minimap_ticks >= 500:
+            draw_minimap(
+                surface,
+                INTERNAL_WIDTH,
+                INTERNAL_HEIGHT,
+                engine.map,
+                engine.player,
+                engine.enemies,
+            )
+            last_minimap_ticks = current_ticks
 
         if engine.phase == GamePhase.ROUND_END:
             _draw_round_end_overlay(surface, font_large, font_med, engine)
@@ -311,7 +326,7 @@ def main():
             )
 
         screen.blit(
-            pygame.transform.scale(surface, (SCREEN_WIDTH, SCREEN_HEIGHT)), (0, 0)
+            pygame.transform.scale(surface, (screen.get_width(), screen.get_height())), (0, 0)
         )
         pygame.display.flip()
 

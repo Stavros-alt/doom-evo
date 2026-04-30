@@ -161,6 +161,11 @@ class GameEngine:
         for _ in range(extra_enemies):
             enemy_classes.append(random.choice([EnemyClass.TANK, EnemyClass.SCOUT]))
 
+        # enemy caps. old code didnt have this but chromebooks die
+        enemy_classes = enemy_classes[:8]
+        if not enemy_classes:
+           enemy_classes = [EnemyClass.TANK]
+
         spawn_points = list(self.map.enemySpawns)
         while len(spawn_points) < len(enemy_classes):
             x = 5 + random.random() * (self.map.width - 10)
@@ -818,6 +823,10 @@ class GameEngine:
                 bullets.pop(i)
             i -= 1
 
+            # bullet caps. old code didnt have this but chromebooks die
+            if len(bullets) > 25:
+               bullets.pop(0)
+
     def _update_particles(self, dt):
         particles = self.particles
         i = len(particles) - 1
@@ -844,13 +853,6 @@ class GameEngine:
                     + (self.damage_dealt[fi] if fi < len(self.damage_dealt) else 0)
                     * 0.8
                 )
-
-            for fi, enemy in enumerate(self.enemies):
-                proximity_score = max(0, 20 - enemy.distanceToPlayer) * 0.5
-                self.fitnesses[fi] += proximity_score
-
-                if enemy.canSeePlayer:
-                    self.fitnesses[fi] += 5
 
             for fi, enemy in enumerate(self.enemies):
                 proximity_score = max(0, 20 - enemy.distanceToPlayer) * 0.5
@@ -928,7 +930,8 @@ class GameEngine:
         return new_pools
 
     def _spawn_muzzle_particles(self, x, y, angle):
-        for _ in range(2):
+        # cut particles for fps on chromebooks. still looks ok
+        for _ in range(1):
             spread = (random.random() - 0.5) * 0.08
             spd = 1.5 + random.random() * 1.0
             self.particles.append(
@@ -945,7 +948,8 @@ class GameEngine:
             )
 
     def _spawn_hit_particles(self, x, y, color):
-        for _ in range(5):
+        # cut particles for fps on chromebooks. still looks ok
+        for _ in range(3):
             a = random.random() * math.pi * 2
             self.particles.append(
                 Particle(
@@ -961,7 +965,8 @@ class GameEngine:
             )
 
     def _spawn_death_particles(self, x, y):
-        for _ in range(15):
+        # cut particles for fps on chromebooks. still looks ok
+        for _ in range(8):
             a = random.random() * math.pi * 2
             speed = 1 + random.random() * 4
             self.particles.append(
