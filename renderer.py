@@ -18,6 +18,7 @@ from game_types import (
 FOV = math.pi / 3
 HALF_FOV = FOV / 2
 
+# i hate color math. these are probably wrong.
 WALL_COLORS = {
     1: ((139, 0, 0), (90, 0, 0)),
     2: ((74, 74, 106), (42, 42, 74)),
@@ -32,781 +33,482 @@ _floor_cache = {}
 _font_cache = {}
 
 
-# font cache (stupid)
-def _get_font(size):
-    if size not in _font_cache:
-        _font_cache[size] = pygame.font.Font(None, size)
-    return _font_cache[size]
+def _get_font(sz):
+    if sz not in _font_cache:
+        _font_cache[sz] = pygame.font.Font(None, sz)
+    return _font_cache[sz]
 
 
-def _get_gradient_surf(w, h, top_color, bottom_color):
-    key = (w, h, top_color, bottom_color)
-    if key in _ceiling_cache:
-        return _ceiling_cache[key]
-    surf = pygame.Surface((w, h))
-    arr = pygame.surfarray.pixels3d(surf)
+def _get_gradient_surf(w, h, c1, c2):
+    k = (w, h, c1, c2)
+    if k in _ceiling_cache:
+        return _ceiling_cache[k]
+    
+    sf = pygame.Surface((w, h))
+    px = pygame.surfarray.pixels3d(sf)
     for y in range(h):
         t = y / max(h - 1, 1)
-        r = int(top_color[0] * (1 - t) + bottom_color[0] * t)
-        g = int(top_color[1] * (1 - t) + bottom_color[1] * t)
-        b = int(top_color[2] * (1 - t) + bottom_color[2] * t)
-        arr[:, y] = (r, g, b)
-    del arr
-    _ceiling_cache[key] = surf
-    return surf
+        r = int(c1[0] * (1 - t) + c2[0] * t)
+        g = int(c1[1] * (1 - t) + c2[1] * t)
+        b = int(c1[2] * (1 - t) + c2[2] * t)
+        px[:, y] = (r, g, b)
+    del px
+    _ceiling_cache[k] = sf
+    return sf
 
 
 def render_frame(
-    surface, game_map, player, enemies, bullets, particles, pickups, flash_alpha, low_quality=False
+    surface, game_map, player, enemies, bullets, particles, pickups, flash_a, low_q=False
 ):
     width, height = surface.get_size()
 
-    ceil_surf = _get_gradient_surf(width, height // 2, (5, 5, 8), (26, 10, 10))
-    surface.blit(ceil_surf, (0, 0))
+    # background gradients. i hope this doesn't lag.
+    c_sf = _get_gradient_surf(width, height // 2, (5, 5, 12), (32, 12, 12))
+    surface.blit(c_sf, (0, 0))
 
-    floor_h = height - height // 2
-    floor_surf = _get_gradient_surf(width, floor_h, (26, 10, 0), (5, 5, 2))
-    surface.blit(floor_surf, (0, height // 2))
+    f_h = height - height // 2
+    f_sf = _get_gradient_surf(width, f_h, (32, 12, 0), (8, 8, 4))
+    surface.blit(f_sf, (0, height // 2))
 
-    wall_pixels = np.zeros((width, height, 3), dtype=np.uint8)
-    z_buffer = np.zeros(width, dtype=np.float64)
+    w_px = np.zeros((width, height, 3), dtype=np.uint8)
+    z_buf = np.full(width, 1000.0, dtype=np.float64)
 
     for x in range(width):
-        ray_angle = player.angle - HALF_FOV + (x / width) * FOV
-        ray = _cast_ray(game_map, player.x, player.y, ray_angle)
+        r_angle = player.angle - HALF_FOV + (x / width) * FOV
+        ray = _cast_ray(game_map, player.x, player.y, r_angle)
 
-        corrected_dist = ray["distance"] * math.cos(ray_angle - player.angle)
-        if corrected_dist < 0.01:
-            corrected_dist = 0.01
-        z_buffer[x] = corrected_dist
+        c_dist = ray["distance"] * math.cos(r_angle - player.angle)
+        if c_dist < 0.05:
+            c_dist = 0.05
+        z_buf[x] = c_dist
 
-        wall_height = min(height * 2, height / corrected_dist)
-        wall_top = (height - wall_height) / 2
+        w_h = min(height * 2.5, height / c_dist)
+        w_t = (height - w_h) / 2
 
-        colors = WALL_COLORS.get(ray["wallType"], WALL_COLORS[1])
-        base_color = np.array(
-            colors[1] if ray["side"] == 1 else colors[0], dtype=np.float64
-        )
+        cls = WALL_COLORS.get(ray["wallType"], WALL_COLORS[1])
+        b_col = np.array(cls[1] if ray["side"] == 1 else cls[0], dtype=np.float64)
 
-        fog = min(1.0, corrected_dist / 18.0)
-        fog_factor = 1.0 - fog * 0.8
+        fg = min(1.0, c_dist / 20.0)
+        fg_f = 1.0 - fg * 0.75
 
-        texture_shift = ray["wallType"] * 17
-        map_x = ray["mapX"]
-        map_y = ray["mapY"]
+        t_shift = ray["wallType"] * 17
+        mx, my = ray["mapX"], ray["mapY"]
 
-        y_start = max(0, int(wall_top))
-        y_end = min(height, int(wall_top + wall_height))
+        ys = max(0, int(w_t))
+        ye = min(height, int(w_t + w_h))
 
-        if y_end > y_start:
-            if not low_quality:
-                tex_coords = np.linspace(0, 1, y_end - y_start)
-                scanline = (
-                    np.sin(tex_coords * 20 + texture_shift + map_x * 3.7 + map_y * 2.3)
-                    * 0.05
-                )
-                brightness = (1.0 - fog * 0.6 + scanline) * fog_factor
+        if ye > ys:
+            if not low_q:
+                tc = np.linspace(0, 1, ye - ys)
+                sl = np.sin(tc * 25 + t_shift + mx * 4.1 + my * 2.7) * 0.06
+                br = (1.0 - fg * 0.5 + sl) * fg_f
             else:
-                brightness = (1.0 - fog * 0.6) * fog_factor
-           # scanlines are expensvie. turn off for bad gpu
-            brightness = np.clip(brightness, 0, 1)
-            wall_pixels[x, y_start:y_end] = (
-                base_color * brightness[:, np.newaxis]
-            ).astype(np.uint8)
+                br = np.full(ye - ys, (1.0 - fg * 0.5) * fg_f)
+            
+            br = np.clip(br, 0, 1)
+            w_px[x, ys:ye] = (b_col * br[:, np.newaxis]).astype(np.uint8)
 
-    wall_surf = pygame.surfarray.make_surface(wall_pixels)
-    surface.blit(wall_surf, (0, 0))
+    w_sf = pygame.surfarray.make_surface(w_px)
+    surface.blit(w_sf, (0, 0))
 
-    _render_sprites(surface, width, height, player, enemies, bullets, pickups, z_buffer)
-    _render_particles(surface, width, height, player, particles, z_buffer)
+    _render_sprites(surface, width, height, player, enemies, bullets, pickups, z_buf)
+    _render_particles(surface, width, height, player, particles, z_buf)
 
-    if flash_alpha > 0:
-        flash_surf = pygame.Surface((width, height), pygame.SRCALPHA)
-        flash_surf.fill((255, 0, 0, int(flash_alpha * 255)))
-        surface.blit(flash_surf, (0, 0))
+    if flash_a > 0:
+        fl_sf = pygame.Surface((width, height), pygame.SRCALPHA)
+        fl_sf.fill((255, 0, 0, int(min(1, flash_a) * 200)))
+        surface.blit(fl_sf, (0, 0))
 
 
-def _cast_ray(game_map, start_x, start_y, angle):
-    cos_a = math.cos(angle)
-    sin_a = math.sin(angle)
-    map_x = int(start_x)
-    map_y = int(start_y)
-    delta_dist_x = abs(1 / (cos_a if abs(cos_a) > 1e-5 else 0.00001))
-    delta_dist_y = abs(1 / (sin_a if abs(sin_a) > 1e-5 else 0.00001))
-    if cos_a < 0:
-        step_x = -1
-        side_dist_x = (start_x - map_x) * delta_dist_x
+def _cast_ray(game_map, sx, sy, angle):
+    ca, sa = math.cos(angle), math.sin(angle)
+    mx, my = int(sx), int(sy)
+    
+    dx = abs(1 / (ca if abs(ca) > 1e-5 else 0.00001))
+    dy = abs(1 / (sa if abs(sa) > 1e-5 else 0.00001))
+    
+    if ca < 0:
+        st_x, sd_x = -1, (sx - mx) * dx
     else:
-        step_x = 1
-        side_dist_x = (map_x + 1 - start_x) * delta_dist_x
-    if sin_a < 0:
-        step_y = -1
-        side_dist_y = (start_y - map_y) * delta_dist_y
+        st_x, sd_x = 1, (mx + 1 - sx) * dx
+    
+    if sa < 0:
+        st_y, sd_y = -1, (sy - my) * dy
     else:
-        step_y = 1
-        side_dist_y = (map_y + 1 - start_y) * delta_dist_y
-    side = 0
-    wall_type = 0
-    hit = False
-    max_steps = 128
-    while not hit and max_steps > 0:
-        max_steps -= 1
-        if side_dist_x < side_dist_y:
-            side_dist_x += delta_dist_x
-            map_x += step_x
+        st_y, sd_y = 1, (my + 1 - sy) * dy
+    
+    side, wt, hit = 0, 0, False
+    steps = 128
+    while not hit and steps > 0:
+        steps -= 1
+        if sd_x < sd_y:
+            sd_x += dx
+            mx += st_x
             side = 0
         else:
-            side_dist_y += delta_dist_y
-            map_y += step_y
+            sd_y += dy
+            my += st_y
             side = 1
-        if (
-            map_x < 0
-            or map_x >= game_map.width
-            or map_y < 0
-            or map_y >= game_map.height
-        ):
-            wall_type = 1
-            hit = True
+        
+        if mx < 0 or mx >= game_map.width or my < 0 or my >= game_map.height:
+            wt, hit = 1, True
             break
-        if game_map.cells[map_y][map_x] > 0:
-            wall_type = game_map.cells[map_y][map_x]
-            hit = True
+        if game_map.cells[my][mx] > 0:
+            wt, hit = game_map.cells[my][mx], True
+            
     if side == 0:
-        distance = (map_x - start_x + (1 - step_x) / 2) / cos_a
+        dist = (mx - sx + (1 - st_x) / 2) / ca
     else:
-        distance = (map_y - start_y + (1 - step_y) / 2) / sin_a
-    return {
-        "distance": abs(distance),
-        "wallType": wall_type,
-        "side": side,
-        "mapX": map_x,
-        "mapY": map_y,
-    }
+        dist = (my - sy + (1 - st_y) / 2) / sa
+        
+    return {"distance": abs(dist), "wallType": wt, "side": side, "mapX": mx, "mapY": my}
 
 
-def _render_sprites(
-    surface, width, height, player, enemies, bullets, pickups, z_buffer
-):
-    sprites = []
+def _render_sprites(surface, w, h, player, enemies, bullets, pickups, z_buf):
+    sp = []
     for e in enemies:
-        if e.state == EnemyState.DEAD:
-            continue
-        dx = e.x - player.x
-        dy = e.y - player.y
-        dist = math.sqrt(dx * dx + dy * dy)
-        sprites.append((e, dist, "enemy"))
-
+        if e.state != EnemyState.DEAD:
+            d = math.sqrt((e.x-player.x)**2 + (e.y-player.y)**2)
+            sp.append((e, d, "enemy"))
+            
     for b in bullets:
-        dx = b.x - player.x
-        dy = b.y - player.y
-        dist = math.sqrt(dx * dx + dy * dy)
-        sprites.append((b, dist, "bullet"))
-
+        d = math.sqrt((b.x-player.x)**2 + (b.y-player.y)**2)
+        sp.append((b, d, "bullet"))
+        
     for p in pickups:
-        if not p.active:
-            continue
-        dx = p.x - player.x
-        dy = p.y - player.y
-        dist = math.sqrt(dx * dx + dy * dy)
-        sprites.append((p, dist, "pickup"))
+        if p.active:
+            d = math.sqrt((p.x-player.x)**2 + (p.y-player.y)**2)
+            sp.append((p, d, "pickup"))
 
-    sprites.sort(key=lambda s: s[1], reverse=True)
+    sp.sort(key=lambda x: x[1], reverse=True)
 
-    for ref, dist, stype in sprites:
-        if dist < 0.3:
-            continue
-
-        dx = ref.x - player.x
-        dy = ref.y - player.y
-
-        sprite_angle = math.atan2(dy, dx) - player.angle
-        sa = sprite_angle
-        while sa > math.pi:
-            sa -= 2 * math.pi
-        while sa < -math.pi:
-            sa += 2 * math.pi
-
-        if abs(sa) > FOV:
-            continue
-
-        corrected_dist = dist * math.cos(sa)
-        if corrected_dist < 0.01:
-            continue
-        sprite_height = min(height * 2, height / corrected_dist)
-        sprite_top = (height - sprite_height) / 2
-        screen_x = ((sa + HALF_FOV) / FOV) * width
-        sprite_width = sprite_height
-        start_x = int(screen_x - sprite_width / 2)
+    for ref, dist, stype in sp:
+        if dist < 0.3: continue
+        
+        dx, dy = ref.x - player.x, ref.y - player.y
+        ang = math.atan2(dy, dx) - player.angle
+        
+        while ang > math.pi: ang -= 2*math.pi
+        while ang < -math.pi: ang += 2*math.pi
+        
+        if abs(ang) > FOV: continue
+        
+        c_dist = dist * math.cos(ang)
+        if c_dist < 0.01: continue
+        
+        s_h = min(h * 2, h / c_dist)
+        s_t = (h - s_h) / 2
+        sx = ((ang + HALF_FOV) / FOV) * w
+        s_w = s_h
+        start_x = int(sx - s_w / 2)
 
         if stype == "enemy":
-            _draw_enemy_sprite(
-                surface,
-                ref,
-                start_x,
-                sprite_top,
-                sprite_width,
-                sprite_height,
-                corrected_dist,
-                z_buffer,
-                width,
-            )
+            _draw_enemy_sprite(surface, ref, start_x, s_t, s_w, s_h, c_dist, z_buf, w)
         elif stype == "pickup":
-            _draw_pickup_sprite(
-                surface,
-                ref,
-                start_x,
-                sprite_top,
-                sprite_width,
-                sprite_height,
-                corrected_dist,
-                z_buffer,
-                width,
-            )
+            _draw_pickup_sprite(surface, ref, start_x, s_t, s_w, s_h, c_dist, z_buf, w)
         else:
-            bx = int(screen_x)
-            if 0 < bx < width and corrected_dist < z_buffer[bx]:
-                size = max(2, int(height / corrected_dist * 0.015))
+            bx = int(sx)
+            if 0 < bx < w and c_dist < z_buf[bx]:
+                sz = max(2, int(h / c_dist * 0.015))
                 if ref.fromPlayer:
-                    trail_len = 0.4
-                    trail_x = ref.x - math.cos(ref.angle) * trail_len
-                    trail_y = ref.y - math.sin(ref.angle) * trail_len
-                    trail_dx = trail_x - player.x
-                    trail_dy = trail_y - player.y
-                    trail_dist = math.sqrt(trail_dx * trail_dx + trail_dy * trail_dy)
-                    trail_angle = math.atan2(trail_dy, trail_dx) - player.angle
-                    tsa = trail_angle
-                    while tsa > math.pi:
-                        tsa -= 2 * math.pi
-                    while tsa < -math.pi:
-                        tsa += 2 * math.pi
-                    if abs(tsa) < FOV:
-                        trail_corrected = trail_dist * math.cos(tsa)
-                        if trail_corrected > 0.01:
-                            trail_sx = ((tsa + HALF_FOV) / FOV) * width
-                            trail_sy = height / 2
-                            pygame.draw.line(
-                                surface,
-                                (255, 200, 50, 150),
-                                (int(trail_sx), trail_sy),
-                                (bx, height // 2),
-                                2,
-                            )
-                    pygame.draw.circle(
-                        surface, (255, 255, 100), (bx, height // 2), size
-                    )
+                    pygame.draw.circle(surface, (255, 255, 100), (bx, h // 2), sz)
                 else:
-                    pygame.draw.circle(surface, (255, 80, 50), (bx, height // 2), size)
+                    pygame.draw.circle(surface, (255, 80, 50), (bx, h // 2), sz)
 
 
-def _draw_enemy_sprite(
-    surface, enemy, start_x, top, w, h, dist, z_buffer, canvas_width
-):
-    fog = min(1, dist / 18)
-    alpha_val = int((1 - fog * 0.5) * 255)
+def _draw_enemy_sprite(surface, enemy, sx, top, w, h, dist, z_buf, canvas_w):
+    fg = min(1, dist / 18)
+    av = int((1 - fg * 0.5) * 255)
+    conf = ENEMY_CLASS_CONFIG.get(enemy.enemyClass, ENEMY_CLASS_CONFIG[EnemyClass.TANK])
+    b_col = conf["minimapColor"]
 
-    config = ENEMY_CLASS_CONFIG.get(
-        enemy.enemyClass, ENEMY_CLASS_CONFIG[EnemyClass.TANK]
-    )
-    body_color = config["minimapColor"]
+    st_col = max(0, int(sx))
+    en_col = min(canvas_w, int(sx + w))
+    if en_col <= st_col: return
 
+    visible = False
+    for x in range(st_col, en_col):
+        if dist < z_buf[x]:
+            visible = True
+            break
+    if not visible: return
+
+    # restoring the little guys. i shouldn't have deleted this but i was tired.
     if enemy.enemyClass == EnemyClass.TANK:
-        head_color = (200, 140, 120)
-        shoulder_color = (
-            int(body_color[0] * 0.7),
-            int(body_color[1] * 0.7),
-            int(body_color[2] * 0.7),
-        )
-        leg_color = (
-            int(body_color[0] * 0.55),
-            int(body_color[1] * 0.55),
-            int(body_color[2] * 0.55),
-        )
-        head_tx_l, head_tx_r = 0.28, 0.72
-        shoulder_tx_l, shoulder_tx_r = 0.10, 0.90
-        torso_tx_l, torso_tx_r = 0.18, 0.82
-        leg_tx_ranges = [(0.22, 0.42), (0.58, 0.78)]
-        arm_tx_ranges = [(0.04, 0.20), (0.80, 0.96)]
-        gun_tx_l, gun_tx_r = 0.38, 0.62
-        gun_hl_tx_l, gun_hl_tx_r = 0.44, 0.56
-        has_gun = True
-        y_head_top = int(h * 0.04)
-        y_head_bot = int(h * 0.22)
-        y_shoulder_top = int(h * 0.20)
-        y_shoulder_bot = int(h * 0.32)
-        y_torso_top = int(h * 0.30)
-        y_torso_bot = int(h * 0.65)
-        y_leg_top = int(h * 0.62)
-        y_leg_bot = int(h)
-        y_arm_top = int(h * 0.30)
-        y_arm_bot = int(h * 0.60)
-        y_gun_center = int(h * 0.45)
-        y_gun_half = int(h * 0.05)
-        eye_tx_ranges = [(0.33, 0.42), (0.58, 0.67)]
-        y_eye_top = int(h * 0.10)
-        y_eye_bot = int(h * 0.17)
+        h_col = (200, 140, 120)
+        s_col = (int(b_col[0]*0.7), int(b_col[1]*0.7), int(b_col[2]*0.7))
+        l_col = (int(b_col[0]*0.55), int(b_col[1]*0.55), int(b_col[2]*0.55))
+        h_tx_l, h_tx_r = 0.28, 0.72
+        s_tx_l, s_tx_r = 0.10, 0.90
+        t_tx_l, t_tx_r = 0.18, 0.82
+        l_tx_rng = [(0.22, 0.42), (0.58, 0.78)]
+        a_tx_rng = [(0.04, 0.20), (0.80, 0.96)]
+        g_tx_l, g_tx_r = 0.38, 0.62
+        has_g = True
+        y_h_t, y_h_b = int(h*0.04), int(h*0.22)
+        y_s_t, y_s_b = int(h*0.20), int(h*0.32)
+        y_t_t, y_t_b = int(h*0.30), int(h*0.65)
+        y_l_t, y_l_b = int(h*0.62), int(h)
+        y_a_t, y_a_b = int(h*0.30), int(h*0.60)
+        y_g_c = int(h*0.45)
+        y_g_h = int(h*0.05)
+        e_tx_rng = [(0.33, 0.42), (0.58, 0.67)]
+        y_e_t, y_e_b = int(h*0.10), int(h*0.17)
     elif enemy.enemyClass == EnemyClass.SCOUT:
-        head_color = (230, 200, 140)
-        shoulder_color = (
-            int(body_color[0] * 0.85),
-            int(body_color[1] * 0.85),
-            int(body_color[2] * 0.85),
-        )
-        leg_color = (
-            int(body_color[0] * 0.6),
-            int(body_color[1] * 0.6),
-            int(body_color[2] * 0.6),
-        )
-        head_tx_l, head_tx_r = 0.35, 0.65
-        shoulder_tx_l, shoulder_tx_r = 0.25, 0.75
-        torso_tx_l, torso_tx_r = 0.30, 0.70
-        leg_tx_ranges = [(0.33, 0.46), (0.54, 0.67)]
-        arm_tx_ranges = [(0.18, 0.30), (0.70, 0.82)]
-        gun_tx_l, gun_tx_r = 0.43, 0.55
-        gun_hl_tx_l, gun_hl_tx_r = 0.47, 0.51
-        has_gun = True
-        y_head_top = int(h * 0.10)
-        y_head_bot = int(h * 0.28)
-        y_shoulder_top = int(h * 0.28)
-        y_shoulder_bot = int(h * 0.36)
-        y_torso_top = int(h * 0.34)
-        y_torso_bot = int(h * 0.60)
-        y_leg_top = int(h * 0.58)
-        y_leg_bot = int(h)
-        y_arm_top = int(h * 0.34)
-        y_arm_bot = int(h * 0.56)
-        y_gun_center = int(h * 0.45)
-        y_gun_half = int(h * 0.03)
-        eye_tx_ranges = [(0.38, 0.44), (0.56, 0.62)]
-        y_eye_top = int(h * 0.15)
-        y_eye_bot = int(h * 0.21)
+        h_col = (230, 200, 140)
+        s_col = (int(b_col[0]*0.85), int(b_col[1]*0.85), int(b_col[2]*0.85))
+        l_col = (int(b_col[0]*0.6), int(b_col[1]*0.6), int(b_col[2]*0.6))
+        h_tx_l, h_tx_r = 0.35, 0.65
+        s_tx_l, s_tx_r = 0.25, 0.75
+        t_tx_l, t_tx_r = 0.30, 0.70
+        l_tx_rng = [(0.33, 0.46), (0.54, 0.67)]
+        a_tx_rng = [(0.18, 0.30), (0.70, 0.82)]
+        g_tx_l, g_tx_r = 0.43, 0.55
+        has_g = True
+        y_h_t, y_h_b = int(h*0.10), int(h*0.28)
+        y_s_t, y_s_b = int(h*0.28), int(h*0.36)
+        y_t_t, y_t_b = int(h*0.34), int(h*0.60)
+        y_l_t, y_l_b = int(h*0.58), int(h)
+        y_a_t, y_a_b = int(h*0.34), int(h*0.56)
+        y_g_c = int(h*0.45)
+        y_g_h = int(h*0.03)
+        e_tx_rng = [(0.38, 0.44), (0.56, 0.62)]
+        y_e_t, y_e_b = int(h*0.15), int(h*0.21)
     else:
-        head_color = (220, 160, 140)
-        shoulder_color = (
-            int(body_color[0] * 0.85),
-            int(body_color[1] * 0.85),
-            int(body_color[2] * 0.85),
-        )
-        leg_color = (
-            int(body_color[0] * 0.65),
-            int(body_color[1] * 0.65),
-            int(body_color[2] * 0.65),
-        )
-        head_tx_l, head_tx_r = 0.32, 0.68
-        shoulder_tx_l, shoulder_tx_r = 0.20, 0.80
-        torso_tx_l, torso_tx_r = 0.25, 0.75
-        leg_tx_ranges = [(0.30, 0.48), (0.52, 0.70)]
-        arm_tx_ranges = [(0.12, 0.26), (0.74, 0.88)]
-        gun_tx_l, gun_tx_r = 0.42, 0.58
-        gun_hl_tx_l, gun_hl_tx_r = 0.47, 0.53
-        has_gun = True
-        y_head_top = int(h * 0.08)
-        y_head_bot = int(h * 0.28)
-        y_shoulder_top = int(h * 0.27)
-        y_shoulder_bot = int(h * 0.35)
-        y_torso_top = int(h * 0.33)
-        y_torso_bot = int(h * 0.62)
-        y_leg_top = int(h * 0.60)
-        y_leg_bot = int(h)
-        y_arm_top = int(h * 0.32)
-        y_arm_bot = int(h * 0.58)
-        y_gun_center = int(h * 0.45)
-        y_gun_half = int(h * 0.04)
-        eye_tx_ranges = [(0.37, 0.44), (0.56, 0.63)]
-        y_eye_top = int(h * 0.15)
-        y_eye_bot = int(h * 0.21)
+        h_col = (220, 160, 140)
+        s_col = (int(b_col[0]*0.85), int(b_col[1]*0.85), int(b_col[2]*0.85))
+        l_col = (int(b_col[0]*0.65), int(b_col[1]*0.65), int(b_col[2]*0.65))
+        h_tx_l, h_tx_r = 0.32, 0.68
+        s_tx_l, s_tx_r = 0.20, 0.80
+        t_tx_l, t_tx_r = 0.25, 0.75
+        l_tx_rng = [(0.30, 0.48), (0.52, 0.70)]
+        a_tx_rng = [(0.12, 0.26), (0.74, 0.88)]
+        g_tx_l, g_tx_r = 0.42, 0.58
+        has_g = True
+        y_h_t, y_h_b = int(h*0.08), int(h*0.28)
+        y_s_t, y_s_b = int(h*0.27), int(h*0.35)
+        y_t_t, y_t_b = int(h*0.33), int(h*0.62)
+        y_l_t, y_l_b = int(h*0.60), int(h)
+        y_a_t, y_a_b = int(h*0.32), int(h*0.58)
+        y_g_c = int(h*0.45)
+        y_g_h = int(h*0.04)
+        e_tx_rng = [(0.37, 0.44), (0.56, 0.63)]
+        y_e_t, y_e_b = int(h*0.15), int(h*0.21)
 
-    gun_color = (51, 51, 51)
-    gun_highlight = (85, 85, 85)
-    hp_green = (0, 255, 68)
-    hp_red = (68, 0, 0)
+    s_sf = pygame.Surface((en_col - st_col, int(h) + 10), pygame.SRCALPHA)
+    hp_r = enemy.health / enemy.maxHealth if enemy.maxHealth > 0 else 0
 
-    start_col = max(0, start_x)
-    end_col = min(canvas_width, start_x + int(w))
-    if end_col <= start_col:
-        return
+    for x in range(st_col, en_col):
+        if dist >= z_buf[x]: continue
+        tx = (x - sx) / w if w > 0 else 0
+        cx = x - st_col
 
-    visible = False
-    for x in range(start_col, end_col):
-        if dist < z_buffer[x]:
-            visible = True
-            break
-    if not visible:
-        return
-
-    sprite_surf = pygame.Surface((end_col - start_col, int(h) + 5), pygame.SRCALPHA)
-
-    hp_ratio = enemy.health / enemy.maxHealth if enemy.maxHealth > 0 else 0
-    bar_w = int(w * 0.8)
-    bar_x_start = int(w * 0.1)
-    y_hp = max(0, int(top) - 4)
-    y_mouth_top = int(h * 0.23)
-    y_mouth_bot = int(h * 0.27)
-
-    for x in range(start_col, end_col):
-        if dist >= z_buffer[x]:
-            continue
-        tx = (x - start_x) / w if w > 0 else 0
-        sx = x - start_col
-
-        if head_tx_l < tx < head_tx_r:
-            pygame.draw.line(
-                sprite_surf,
-                (*head_color, alpha_val),
-                (sx, y_head_top),
-                (sx, y_head_bot),
-            )
-
+        # head
+        if h_tx_l < tx < h_tx_r:
+            pygame.draw.line(s_sf, (*h_col, av), (cx, y_h_t), (cx, y_h_b))
+        
+        # eyes. turning red when they see you.
         if enemy.canSeePlayer:
-            for el, er in eye_tx_ranges:
+            for el, er in e_tx_rng:
                 if el < tx < er:
-                    pygame.draw.line(
-                        sprite_surf,
-                        (255, 50, 0, alpha_val),
-                        (sx, y_eye_top),
-                        (sx, y_eye_bot),
-                    )
-
-        if enemy.enemyClass != EnemyClass.SCOUT:
-            if 0.38 < tx < 0.62:
-                pygame.draw.line(
-                    sprite_surf,
-                    (120, 30, 20, alpha_val),
-                    (sx, y_mouth_top),
-                    (sx, y_mouth_bot),
-                )
-
-        if shoulder_tx_l < tx < shoulder_tx_r:
-            pygame.draw.line(
-                sprite_surf,
-                (*shoulder_color, alpha_val),
-                (sx, y_shoulder_top),
-                (sx, y_shoulder_bot),
-            )
-
-        if torso_tx_l < tx < torso_tx_r:
-            pygame.draw.line(
-                sprite_surf,
-                (*body_color, alpha_val),
-                (sx, y_torso_top),
-                (sx, y_torso_bot),
-            )
-
-        if 0.28 < tx < 0.72:
-            pygame.draw.line(
-                sprite_surf,
-                (60, 20, 15, alpha_val),
-                (sx, int(h * 0.58)),
-                (sx, int(h * 0.62)),
-            )
-
-        for ll, lr in leg_tx_ranges:
+                    pygame.draw.line(s_sf, (255, 50, 0, av), (cx, y_e_t), (cx, y_e_b))
+        
+        # shoulders and torso
+        if s_tx_l < tx < s_tx_r:
+            pygame.draw.line(s_sf, (*s_col, av), (cx, y_s_t), (cx, y_s_b))
+        if t_tx_l < tx < t_tx_r:
+            pygame.draw.line(s_sf, (*b_col, av), (cx, y_t_t), (cx, y_t_b))
+        
+        # limbs
+        for ll, lr in l_tx_rng:
             if ll < tx < lr:
-                pygame.draw.line(
-                    sprite_surf,
-                    (*leg_color, alpha_val),
-                    (sx, y_leg_top),
-                    (sx, y_leg_bot),
-                )
-
-        for al, ar in arm_tx_ranges:
+                pygame.draw.line(s_sf, (*l_col, av), (cx, y_l_t), (cx, y_l_b))
+        for al, ar in a_tx_rng:
             if al < tx < ar:
-                pygame.draw.line(
-                    sprite_surf,
-                    (*body_color, alpha_val),
-                    (sx, y_arm_top),
-                    (sx, y_arm_bot),
-                )
+                pygame.draw.line(s_sf, (*b_col, av), (cx, y_a_t), (cx, y_a_b))
 
-        if has_gun:
-            if gun_tx_l < tx < gun_tx_r:
-                pygame.draw.line(
-                    sprite_surf,
-                    (*gun_color, alpha_val),
-                    (sx, y_gun_center - y_gun_half),
-                    (sx, y_gun_center + y_gun_half),
-                )
-                if gun_hl_tx_l < tx < gun_hl_tx_r:
-                    pygame.draw.line(
-                        sprite_surf,
-                        (*gun_highlight, alpha_val),
-                        (sx, y_gun_center - y_gun_half),
-                        (sx, y_gun_center + y_gun_half),
-                    )
+        # gun. i hate drawing weapons.
+        if has_g:
+            if g_tx_l < tx < g_tx_r:
+                pygame.draw.line(s_sf, (51, 51, 51, av), (cx, y_g_c - y_g_h), (cx, y_g_c + y_g_h))
 
+        # tiny health bar above them. 
         if 0.1 < tx < 0.9:
-            rel_x = (x - start_x - bar_x_start) / bar_w if bar_w > 0 else 0
+            bw = int(w * 0.8)
+            bx_s = int(w * 0.1)
+            rel_x = (x - sx - bx_s) / bw if bw > 0 else 0
             if 0 < rel_x < 1:
-                c = hp_green if rel_x < hp_ratio else hp_red
-                pygame.draw.line(
-                    sprite_surf, (*c, alpha_val), (sx, y_hp), (sx, y_hp + 3)
-                )
-
-    surface.blit(sprite_surf, (start_col, top))
+                col = (0, 255, 68, av) if rel_x < hp_r else (68, 0, 0, av)
+                pygame.draw.line(s_sf, col, (cx, 0), (cx, 3))
+    
+    surface.blit(s_sf, (st_col, top))
 
 
-def _draw_pickup_sprite(
-    surface, pickup, start_x, top, w, h, dist, z_buffer, canvas_width
-):
-    fog = min(1, dist / 18)
-    alpha_val = int((1 - fog * 0.5) * 255)
-
-    start_col = max(0, start_x)
-    end_col = min(canvas_width, start_x + int(w))
-    if end_col <= start_col:
-        return
-
+def _draw_pickup_sprite(surface, p, sx, top, w, h, dist, z_buf, canvas_w):
+    fg = min(1, dist / 18)
+    av = int((1 - fg * 0.5) * 255)
+    
+    st_col = max(0, int(sx))
+    en_col = min(canvas_w, int(sx + w))
+    if en_col <= st_col: return
+    
     visible = False
-    for x in range(start_col, end_col):
-        if dist < z_buffer[x]:
+    for x in range(st_col, en_col):
+        if dist < z_buf[x]:
             visible = True
             break
-    if not visible:
-        return
+    if not visible: return
+    
+    s_sf = pygame.Surface((en_col - st_col, int(h) + 5), pygame.SRCALPHA)
+    
+    for x in range(st_col, en_col):
+        if dist >= z_buf[x]: continue
+        tx = (x - sx) / w
+        cx = x - st_col
 
-    sprite_surf = pygame.Surface((end_col - start_col, int(h) + 5), pygame.SRCALPHA)
-
-    surf_w = end_col - start_col
-    surf_h = int(h) + 5
-    center_x = surf_w / 2
-
-    if pickup.pickupType == PickupType.HEALTH:
-        white = (255, 255, 255, alpha_val)
-        red = (255, 0, 0, alpha_val)
-        box_left = int(surf_w * 0.2)
-        box_right = int(surf_w * 0.8)
-        box_top = int(surf_h * 0.2)
-        box_bottom = int(surf_h * 0.8)
-        pygame.draw.rect(
-            sprite_surf,
-            white,
-            (box_left, box_top, box_right - box_left, box_bottom - box_top),
-        )
-        cross_w = max(1, (box_right - box_left) // 5)
-        pygame.draw.rect(
-            sprite_surf,
-            red,
-            (center_x - cross_w // 2, box_top, cross_w, box_bottom - box_top),
-        )
-        pygame.draw.rect(
-            sprite_surf,
-            red,
-            (
-                box_left,
-                (box_top + box_bottom) // 2 - cross_w // 2,
-                box_right - box_left,
-                cross_w,
-            ),
-        )
-    else:
-        ammo_color = (230, 120, 0, alpha_val)
-        inner_color = (255, 180, 50, alpha_val)
-        box_left = int(surf_w * 0.25)
-        box_right = int(surf_w * 0.75)
-        box_top = int(surf_h * 0.25)
-        box_bottom = int(surf_h * 0.75)
-        pygame.draw.rect(
-            sprite_surf,
-            ammo_color,
-            (box_left, box_top, box_right - box_left, box_bottom - box_top),
-        )
-        inner_pad = 3
-        pygame.draw.rect(
-            sprite_surf,
-            inner_color,
-            (
-                box_left + inner_pad,
-                box_top + inner_pad,
-                box_right - box_left - inner_pad * 2,
-                box_bottom - box_top - inner_pad * 2,
-            ),
-        )
-
-    surface.blit(sprite_surf, (start_col, top))
+        # making these boxes look like actual pickups again
+        if p.pickupType == PickupType.HEALTH:
+            if 0.2 < tx < 0.8:
+                pygame.draw.line(s_sf, (255, 255, 255, av), (cx, int(h*0.2)), (cx, int(h*0.8)))
+                # red cross
+                if 0.45 < tx < 0.55:
+                    pygame.draw.line(s_sf, (255, 0, 0, av), (cx, int(h*0.3)), (cx, int(h*0.7)))
+                elif 0.35 < tx < 0.65:
+                    pygame.draw.line(s_sf, (255, 0, 0, av), (cx, int(h*0.45)), (cx, int(h*0.55)))
+        else:
+            if 0.25 < tx < 0.75:
+                pygame.draw.line(s_sf, (230, 120, 0, av), (cx, int(h*0.25)), (cx, int(h*0.75)))
+                if 0.4 < tx < 0.6:
+                    pygame.draw.line(s_sf, (255, 180, 50, av), (cx, int(h*0.35)), (cx, int(h*0.65)))
+            
+    surface.blit(s_sf, (st_col, top))
 
 
-def _render_particles(surface, width, height, player, particles, z_buffer):
-    if not particles:
-        return
-    for p in particles:
-        dx = p.x - player.x
-        dy = p.y - player.y
-        dist = math.sqrt(dx * dx + dy * dy)
-        if dist < 0.1:
-            continue
-
-        angle = math.atan2(dy, dx) - player.angle
-        sa = angle
-        while sa > math.pi:
-            sa -= 2 * math.pi
-        while sa < -math.pi:
-            sa += 2 * math.pi
-        if abs(sa) > FOV * 0.8:
-            continue
-
-        corrected_dist = dist * math.cos(sa)
-        screen_x = ((sa + HALF_FOV) / FOV) * width
-        bx = int(screen_x)
-        if bx < 0 or bx >= width:
-            continue
-        if corrected_dist >= z_buffer[bx]:
-            continue
-
-        size = max(1, int((p.size / corrected_dist) * height * 0.1))
-        life_ratio = p.life / p.maxLife if p.maxLife > 0 else 0
-        alpha = int(life_ratio * 0.8 * 255)
-        color = (
-            p.color
-            if isinstance(p.color, tuple) and len(p.color) == 3
-            else (255, 255, 255)
-        )
-        pygame.draw.circle(surface, (*color, alpha), (bx, height // 2), size)
+def _render_particles(surface, w, h, player, pt, z_buf):
+    if not pt: return
+    for p in pt:
+        dx, dy = p.x - player.x, p.y - player.y
+        dist = math.sqrt(dx*dx + dy*dy)
+        if dist < 0.1: continue
+        
+        ang = math.atan2(dy, dx) - player.angle
+        while ang > math.pi: ang -= 2*math.pi
+        while ang < -math.pi: ang += 2*math.pi
+        if abs(ang) > FOV * 0.8: continue
+        
+        c_dist = dist * math.cos(ang)
+        sx = ((ang + HALF_FOV) / FOV) * w
+        bx = int(sx)
+        if bx < 0 or bx >= w: continue
+        if c_dist >= z_buf[bx]: continue
+        
+        sz = max(1, int((p.size / c_dist) * h * 0.1))
+        alpha = int((p.life / p.maxLife) * 0.8 * 255)
+        pygame.draw.circle(surface, (*p.color, alpha), (bx, h // 2), sz)
 
 
-def render_hud(
-    surface,
-    player,
-    round_num,
-    score,
-    is_shooting,
-    shoot_flash,
-    is_punching=False,
-    money=0,
-):
-    width, height = surface.get_size()
+def render_hud(sf, player, rnd, score, shooting, flash, punching=False, money=0):
+    w, h = sf.get_size()
+    
+    # semi-transparent bars
+    b_bg = (20, 20, 25, 160)
+    pygame.draw.rect(sf, b_bg, (15, h - 70, 180, 55), border_radius=4)
+    
+    hp_r = player.health / player.maxHealth if player.maxHealth > 0 else 0
+    hp_c = (0, 255, 100) if hp_r > 0.6 else (255, 200, 0) if hp_r > 0.3 else (255, 50, 0)
+    
+    pygame.draw.rect(sf, (40, 10, 10), (25, h - 60, 160, 14), border_radius=2)
+    pygame.draw.rect(sf, hp_c, (25, h - 60, int(160 * hp_r), 14), border_radius=2)
+    
+    fn = _get_font(22)
+    sf.blit(fn.render(f"VITAL SIGNS: {int(player.health)}%", True, (255, 255, 255)), (25, h - 42))
 
-    hud_rect = pygame.Surface((width, 80), pygame.SRCALPHA)
-    hud_rect.fill((0, 0, 0, 191))
-    surface.blit(hud_rect, (0, height - 80))
+    # ammo
+    pygame.draw.rect(sf, (20, 20, 10), (25, h - 28, 160, 8), border_radius=1)
+    am_r = player.ammo / player.maxAmmo if player.maxAmmo > 0 else 0
+    pygame.draw.rect(sf, (200, 150, 0), (25, h - 28, int(160 * am_r), 8), border_radius=1)
 
-    hp_ratio = player.health / player.maxHealth if player.maxHealth > 0 else 0
-    if hp_ratio > 0.6:
-        hp_color = (0, 204, 68)
-    elif hp_ratio > 0.3:
-        hp_color = (255, 170, 0)
-    else:
-        hp_color = (255, 34, 0)
+    # right info
+    pygame.draw.rect(sf, b_bg, (w - 200, h - 70, 185, 55), border_radius=4)
+    sf.blit(fn.render(f"PHASE {rnd}", True, (255, 100, 0)), (w - 190, h - 62))
+    sf.blit(fn.render(f"CREDITS: {money}", True, (255, 200, 0)), (w - 190, h - 42))
 
-    pygame.draw.rect(surface, (34, 34, 34), (20, height - 60, 160, 18))
-    pygame.draw.rect(surface, hp_color, (20, height - 60, int(160 * hp_ratio), 18))
-    pygame.draw.rect(surface, (85, 85, 85), (20, height - 60, 160, 18), 1)
+    wn = player.weaponType.upper() if player.weaponType != "default" else "MK-1 PISTOL"
+    sf.blit(fn.render(wn, True, (150, 150, 150)), (w - 190, h - 25))
 
-    font = _get_font(24)
-    hp_text = font.render(f"HP: {player.health}", True, (255, 255, 255))
-    surface.blit(hp_text, (28, height - 46))
+    # crosshair. i swear if i have to align this again...
+    cx, cy = w // 2, h // 2
+    cc = (255, 255, 255, 180) if not shooting else (255, 50, 0)
+    pygame.draw.line(sf, cc, (cx - 8, cy), (cx + 8, cy), 1)
+    pygame.draw.line(sf, cc, (cx, cy - 8), (cx, cy + 8), 1)
+    pygame.draw.circle(sf, cc, (cx, cy), 2, 1)
 
-    pygame.draw.rect(surface, (34, 34, 34), (20, height - 36, 160, 18))
-    ammo_ratio = player.ammo / player.maxAmmo if player.maxAmmo > 0 else 0
-    pygame.draw.rect(
-        surface, (255, 170, 0), (20, height - 36, int(160 * ammo_ratio), 18)
-    )
-    pygame.draw.rect(surface, (85, 85, 85), (20, height - 36, 160, 18), 1)
-
-    ammo_text = font.render(f"AMMO: {player.ammo}", True, (255, 255, 255))
-    surface.blit(ammo_text, (28, height - 22))
-
-    if player.armor > 0:
-        armor_text = font.render(f"ARMOR: {player.armor}", True, (100, 150, 255))
-        surface.blit(armor_text, (190, height - 46))
-
-    weapon_name = (
-        player.weaponType.upper() if player.weaponType != "default" else "PISTOL"
-    )
-    weapon_text = font.render(f"WEAPON: {weapon_name}", True, (255, 136, 0))
-    surface.blit(weapon_text, (190, height - 22))
-
-    font_bold = _get_font(28)
-    round_text = font_bold.render(f"ROUND: {round_num}", True, (255, 68, 0))
-    surface.blit(round_text, (width // 2 - 60, height - 55))
-
-    score_text = font_bold.render(f"SCORE: {score}", True, (255, 170, 0))
-    surface.blit(score_text, (width // 2 - 60, height - 35))
-
-    if money > 0:
-        money_text = font_bold.render(f"${money}", True, (255, 221, 68))
-        surface.blit(money_text, (width - 100, height - 55))
-
-    cx = width // 2
-    cy = height // 2
-    cross_size = 10 + (5 if shoot_flash > 0 else 0)
-    cross_color = (255, 68, 0) if shoot_flash > 0 else (255, 255, 255)
-    pygame.draw.line(
-        surface, cross_color, (cx - cross_size, cy), (cx + cross_size, cy), 2
-    )
-    pygame.draw.line(
-        surface, cross_color, (cx, cy - cross_size), (cx, cy + cross_size), 2
-    )
-
-    _draw_weapon(surface, width, height, is_shooting, shoot_flash, is_punching)
+    _draw_weapon(sf, w, h, shooting, flash, punching)
 
 
-def _draw_weapon(surface, width, height, is_shooting, shoot_flash, is_punching=False):
-    wx = width // 2
-    wy = height - 10
-    bob = math.sin(pygame.time.get_ticks() * 0.003) * 3
-    kickback = -15 if is_shooting else 0
+def _draw_weapon(sf, w, h, shooting, flash, punching=False):
+    wx, wy = w // 2, h - 10
+    bb = math.sin(pygame.time.get_ticks() * 0.003) * 3
+    kb = -15 if shooting else 0
 
-    if is_punching:
-        punch_surf = pygame.Surface((80, 100), pygame.SRCALPHA)
-        pygame.draw.ellipse(punch_surf, (210, 160, 130), (10, 20, 50, 40))
-        pygame.draw.ellipse(punch_surf, (180, 130, 100), (15, 25, 40, 30))
-        knuckle_color = (200, 150, 120)
+    if punching:
+        p_sf = pygame.Surface((80, 100), pygame.SRCALPHA)
+        pygame.draw.ellipse(p_sf, (210, 160, 130), (10, 20, 50, 40))
         for i in range(4):
-            pygame.draw.circle(punch_surf, knuckle_color, (20 + i * 10, 22), 4)
-        forearm_color = (190, 140, 110)
-        pygame.draw.rect(punch_surf, forearm_color, (25, 55, 20, 35))
-        punch_bob = bob + kickback * 0.5
-        surface.blit(punch_surf, (wx - 10, wy - 90 + punch_bob))
+            pygame.draw.circle(p_sf, (200, 150, 120), (20 + i * 10, 22), 4)
+        sf.blit(p_sf, (wx - 10, wy - 90 + bb + kb * 0.5))
     else:
-        gun_surf = pygame.Surface((60, 120), pygame.SRCALPHA)
-        pygame.draw.rect(gun_surf, (51, 51, 51), (15, 30, 30, 60))
-        pygame.draw.rect(gun_surf, (34, 34, 34), (22, 10, 16, 25))
-        pygame.draw.rect(gun_surf, (17, 17, 17), (26, 0, 8, 15))
-        pygame.draw.rect(gun_surf, (74, 48, 32), (18, 60, 24, 40))
-
-        if shoot_flash > 0:
-            alpha = int(shoot_flash * 255)
-            pygame.draw.circle(gun_surf, (255, 238, 68, alpha), (30, 0), 12)
-            pygame.draw.circle(gun_surf, (255, 255, 255, alpha), (30, 0), 5)
-
-        surface.blit(gun_surf, (wx - 30, wy - 110 + bob + kickback))
+        g_sf = pygame.Surface((60, 120), pygame.SRCALPHA)
+        pygame.draw.rect(g_sf, (51, 51, 51), (15, 30, 30, 60))
+        pygame.draw.rect(g_sf, (34, 34, 34), (22, 10, 16, 25))
+        if flash > 0:
+            al = int(flash * 255)
+            pygame.draw.circle(g_sf, (255, 238, 68, al), (30, 0), 12)
+        sf.blit(g_sf, (wx - 30, wy - 110 + bb + kb))
 
 
-def draw_minimap(surface, width, height, game_map, player, enemies):
-    map_size = 150
-    cell_size = map_size / game_map.width
-    mx = width - map_size - 10
-    my = 10
+def draw_minimap(sf, w, h, gm, player, en):
+    rad = 60
+    sz = rad * 2
+    mx, my = w - sz - 15, 15
 
-    bg = pygame.Surface((map_size, map_size), pygame.SRCALPHA)
-    bg.fill((0, 0, 0, 178))
-    surface.blit(bg, (mx, my))
+    cs = (sz * 0.8) / max(gm.width, gm.height)
+    ox = (sz - gm.width * cs) / 2
+    oy = (sz - gm.height * cs) / 2
 
-    mm = pygame.Surface((map_size, map_size), pygame.SRCALPHA)
-    for y in range(game_map.height):
-        for x in range(game_map.width):
-            cell = game_map.cells[y][x]
-            if cell > 0:
-                color = (136, 136, 136) if cell == 9 else (85, 85, 85)
-                cs = max(1, cell_size)
-                pygame.draw.rect(mm, color, (x * cell_size, y * cell_size, cs, cs))
+    m_sf = pygame.Surface((sz, sz), pygame.SRCALPHA)
+    pygame.draw.circle(m_sf, (0, 20, 10, 200), (rad, rad), rad)
+    
+    # grid
+    for i in range(0, sz, 4):
+        pygame.draw.line(m_sf, (0, 40, 20, 100), (0, i), (sz, i), 1)
+        pygame.draw.line(m_sf, (0, 40, 20, 100), (i, 0), (i, sz), 1)
 
-    px = player.x * cell_size
-    py = player.y * cell_size
-    pygame.draw.circle(mm, (0, 255, 136), (int(px), int(py)), 3)
+    for y in range(gm.height):
+        for x in range(gm.width):
+            c = gm.cells[y][x]
+            if c > 0:
+                col = (0, 150, 80, 180) if c == 9 else (0, 100, 50, 150)
+                pygame.draw.rect(m_sf, col, (ox + x * cs, oy + y * cs, max(1, cs), max(1, cs)))
 
-    dir_x = px + math.cos(player.angle) * 3 * cell_size
-    dir_y = py + math.sin(player.angle) * 3 * cell_size
-    pygame.draw.line(mm, (0, 255, 136), (px, py), (dir_x, dir_y), 1)
+    px, py = ox + player.x * cs, oy + player.y * cs
+    pygame.draw.circle(m_sf, (0, 255, 136), (int(px), int(py)), 3)
+    
+    # cone
+    pts = [(px, py),
+           (px + math.cos(player.angle - 0.4) * 15, py + math.sin(player.angle - 0.4) * 15),
+           (px + math.cos(player.angle + 0.4) * 15, py + math.sin(player.angle + 0.4) * 15)]
+    pygame.draw.polygon(m_sf, (0, 255, 136, 60), pts)
 
-    for e in enemies:
-        if e.state == EnemyState.DEAD:
-            continue
-        color = ENEMY_CLASS_CONFIG.get(
-            e.enemyClass, ENEMY_CLASS_CONFIG[EnemyClass.TANK]
-        )["minimapColor"]
-        ex = e.x * cell_size
-        ey = e.y * cell_size
-        pygame.draw.circle(mm, color, (int(ex), int(ey)), 2)
+    for e in en:
+        if e.state != EnemyState.DEAD:
+            cl = ENEMY_CLASS_CONFIG.get(e.enemyClass, ENEMY_CLASS_CONFIG[EnemyClass.TANK])["minimapColor"]
+            pygame.draw.circle(m_sf, (*cl, 200), (int(ox + e.x * cs), int(oy + e.y * cs)), 2)
 
-    pygame.draw.rect(mm, (68, 68, 68), (0, 0, map_size, map_size), 1)
-    surface.blit(mm, (mx, my))
+    msk = pygame.Surface((sz, sz), pygame.SRCALPHA)
+    pygame.draw.circle(msk, (255, 255, 255, 255), (rad, rad), rad)
+    m_sf.blit(msk, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+    
+    pygame.draw.circle(sf, (0, 255, 100, 40), (mx + rad, my + rad), rad + 2, 3)
+    pygame.draw.circle(sf, (0, 120, 50), (mx + rad, my + rad), rad, 2)
+    sf.blit(m_sf, (mx, my))

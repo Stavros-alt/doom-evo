@@ -102,21 +102,25 @@ class GameEngine:
             baseMaxAmmo=base_ammo,
         )
 
-        # Genome pools: {"tank": [g1, g2, g3], "scout": [g4, g5, g6]}
+        # genome pools. i hate nested dicts but here we are.
         if existing_genome_pools and len(existing_genome_pools) > 0:
             self.genome_pools = dict(existing_genome_pools)
             for key in CLASS_GENOME_KEYS:
                 if key not in self.genome_pools:
-                    self.genome_pools[key] = [
-                        random_genome() for _ in range(POPULATION_SIZE)
-                    ]
+                    # why is this missing? fine, random it is.
+                    self.genome_pools[key] = []
+                    for _ in range(POPULATION_SIZE):
+                        self.genome_pools[key].append(random_genome())
+                
                 while len(self.genome_pools[key]) < POPULATION_SIZE:
                     self.genome_pools[key].append(random_genome())
         else:
-            self.genome_pools = {
-                key: [random_genome() for _ in range(POPULATION_SIZE)]
-                for key in CLASS_GENOME_KEYS
-            }
+            self.genome_pools = {}
+            for key in CLASS_GENOME_KEYS:
+                pool = []
+                for _ in range(POPULATION_SIZE):
+                    pool.append(random_genome())
+                self.genome_pools[key] = pool
 
         self.round = round_num
 
@@ -137,10 +141,12 @@ class GameEngine:
         self.shoot_flash = 0
         self.score = 0
 
-        # Fitness and damage tracked per enemy index
+        # tracking stats. hope i didn't break indices again
         num_enemies = len(self.enemies)
         self.fitnesses = [0.0] * num_enemies
         self.damage_dealt = [0] * num_enemies
+        self.time_spent_seeing_player = [0.0] * num_enemies
+        self.bullets_fired = [0] * num_enemies
 
         self.generation_history = []
         self.phase = GamePhase.PLAYING
@@ -161,8 +167,8 @@ class GameEngine:
         for _ in range(extra_enemies):
             enemy_classes.append(random.choice([EnemyClass.TANK, EnemyClass.SCOUT]))
 
-        # enemy caps. old code didnt have this but chromebooks die
-        enemy_classes = enemy_classes[:8]
+        # enemy caps. chromebooks would explode otherwise
+        enemy_classes = enemy_classes[:10]
         if not enemy_classes:
            enemy_classes = [EnemyClass.TANK]
 
@@ -188,9 +194,9 @@ class GameEngine:
             class_key = eclass.value
             idx = class_counts[class_key]
             class_counts[class_key] += 1
-            genome = self.genome_pools[class_key][
-                idx % len(self.genome_pools[class_key])
-            ]
+            
+            current_pool = self.genome_pools[class_key]
+            genome = current_pool[idx % len(current_pool)]
 
             config = ENEMY_CLASS_CONFIG[eclass]
             attrs = get_attributes_from_genome(genome)
@@ -201,8 +207,8 @@ class GameEngine:
                     x=ex,
                     y=ey,
                     angle=random.random() * math.pi * 2,
-                    health=config["hp"] * attrs["health_mult"],
-                    maxHealth=config["hp"] * attrs["health_mult"],
+                    health=int(config["hp"] * attrs["health_mult"]),
+                    maxHealth=int(config["hp"] * attrs["health_mult"]),
                     speed=config["speed"] * attrs["speed_mult"],
                     state=EnemyState.PATROL,
                     enemyClass=eclass,
@@ -231,18 +237,22 @@ class GameEngine:
             _enemy_id_counter += 1
 
     def _spawn_pickups(self):
-        positions = generate_pickup_positions(self.map, 4, min_dist_from_spawn=5.0)
+        # spawn extra pickups so the player doesn't cry
+        positions = generate_pickup_positions(self.map, 6, min_d_spawn=5.0)
         pickup_types = [
             PickupType.HEALTH,
             PickupType.HEALTH,
             PickupType.AMMO,
             PickupType.AMMO,
+            PickupType.HEALTH,
+            PickupType.AMMO,
         ]
         random.shuffle(pickup_types)
 
-        for i, (px, py) in enumerate(positions):
+        for i, pos in enumerate(positions):
+            px, py = pos
             ptype = pickup_types[i] if i < len(pickup_types) else PickupType.HEALTH
-            amount = 25 if ptype == PickupType.HEALTH else 20
+            amount = 30 if ptype == PickupType.HEALTH else 25
             self.pickups.append(
                 Pickup(x=px, y=py, pickupType=ptype, amount=amount, active=True)
             )
@@ -268,59 +278,58 @@ class GameEngine:
         keys = self.keys
 
         if self.mouse_locked and self.mouse_x != 0:
-            player.angle += self.mouse_x * 0.002
+            player.angle += self.mouse_x * 0.0025
             self.mouse_x = 0
             while player.angle > math.pi:
                 player.angle -= 2 * math.pi
             while player.angle < -math.pi:
                 player.angle += 2 * math.pi
 
-        cos = math.cos(player.angle)
-        sin = math.sin(player.angle)
-        mx = 0.0
-        my = 0.0
+        cos_a = math.cos(player.angle)
+        sin_a = math.sin(player.angle)
+        move_x = 0.0
+        move_y = 0.0
 
         if keys.get("w"):
-            mx += cos
-            my += sin
+            move_x += cos_a
+            move_y += sin_a
         if keys.get("s"):
-            mx -= cos
-            my -= sin
+            move_x -= cos_a
+            move_y -= sin_a
         if keys.get("a"):
-            mx += sin
-            my -= cos
+            move_x += sin_a
+            move_y -= cos_a
         if keys.get("d"):
-            mx -= sin
-            my += cos
+            move_x -= sin_a
+            move_y += cos_a
 
-        length = math.sqrt(mx * mx + my * my)
-        if length > 0:
-            mx = (mx / length) * player.speed * dt
-            my = (my / length) * player.speed * dt
+        mag = math.sqrt(move_x * move_x + move_y * move_y)
+        if mag > 0:
+            move_x = (move_x / mag) * player.speed * dt
+            move_y = (move_y / mag) * player.speed * dt
 
-            nx = player.x + mx
-            ny = player.y + my
-            margin = 0.25
+            nx = player.x + move_x
+            ny = player.y + move_y
+            margin = 0.3
             if is_walkable(
                 game_map,
-                nx + (1 if mx > 0 else (-1 if mx < 0 else 0)) * margin,
+                nx + (1 if move_x > 0 else (-1 if move_x < 0 else 0)) * margin,
                 player.y,
             ):
                 player.x = nx
             if is_walkable(
                 game_map,
                 player.x,
-                ny + (1 if my > 0 else (-1 if my < 0 else 0)) * margin,
+                ny + (1 if move_y > 0 else (-1 if move_y < 0 else 0)) * margin,
             ):
                 player.y = ny
 
-        # Pickup collection
+        # pickup collection. i should probably optimize this but it's fine
         for pickup in self.pickups:
             if not pickup.active:
                 continue
-            dx = player.x - pickup.x
-            dy = player.y - pickup.y
-            if dx * dx + dy * dy < 0.64:
+            dist_sq = (player.x - pickup.x)**2 + (player.y - pickup.y)**2
+            if dist_sq < 0.64:
                 if pickup.pickupType == PickupType.HEALTH:
                     player.health = min(player.maxHealth, player.health + pickup.amount)
                 else:
@@ -341,11 +350,7 @@ class GameEngine:
             and player.ammo > 0
         ):
             player.isShooting = True
-            weapon_key = (
-                player.weaponType
-                if player.weaponType in WEAPON_COOLDOWNS
-                else "default"
-            )
+            weapon_key = player.weaponType if player.weaponType in WEAPON_COOLDOWNS else "default"
             player.shootCooldown = WEAPON_COOLDOWNS[weapon_key]
             player.ammo -= 1
             self.shoot_flash = 1
@@ -355,17 +360,17 @@ class GameEngine:
             base_damage = WEAPON_DAMAGE[weapon_key]
 
             for i in range(num_bullets):
-                spread = 0
+                spread_val = 0
                 if num_bullets > 1:
-                    spread = (i - (num_bullets - 1) / 2) * 0.08
-                angle = base_angle + spread
+                    spread_val = (i - (num_bullets - 1) / 2) * 0.12
+                final_angle = base_angle + spread_val
 
                 self.bullets.append(
                     Bullet(
                         id=_bullet_id_counter,
                         x=player.x,
                         y=player.y,
-                        angle=angle,
+                        angle=final_angle,
                         speed=BULLET_SPEED,
                         damage=base_damage,
                         fromPlayer=True,
@@ -383,12 +388,12 @@ class GameEngine:
             player.isPunching = True
             player.punchCooldown = PUNCH_COOLDOWN
 
-            cos_a = math.cos(player.angle)
-            sin_a = math.sin(player.angle)
-            punch_x = player.x + cos_a * PUNCH_RANGE * 0.5
-            punch_y = player.y + sin_a * PUNCH_RANGE * 0.5
+            cos_p = math.cos(player.angle)
+            sin_p = math.sin(player.angle)
+            punch_x = player.x + cos_p * PUNCH_RANGE * 0.6
+            punch_y = player.y + sin_p * PUNCH_RANGE * 0.6
 
-            for ei, enemy in enumerate(self.enemies):
+            for enemy_idx, enemy in enumerate(self.enemies):
                 if enemy.state == EnemyState.DEAD:
                     continue
                 dx = enemy.x - punch_x
@@ -397,37 +402,30 @@ class GameEngine:
                     enemy.health -= PUNCH_DAMAGE
                     self._spawn_hit_particles(enemy.x, enemy.y, (255, 34, 0))
 
-                    if ei < len(self.damage_dealt):
-                        self.damage_dealt[ei] += PUNCH_DAMAGE
+                    if enemy_idx < len(self.damage_dealt):
+                        self.damage_dealt[enemy_idx] += PUNCH_DAMAGE
 
                     if enemy.health <= 0:
                         enemy.state = EnemyState.DEAD
                         self.score += 100 * self.round
-                        self.money += max(1, int(self.round * 1.5))
+                        self.money += max(1, int(self.round * 2))
                         self._spawn_death_particles(enemy.x, enemy.y)
 
-                        fi = next(
-                            (
-                                idx
-                                for idx, e in enumerate(self.enemies)
-                                if e.id == enemy.id
-                            ),
-                            -1,
-                        )
-                        if fi >= 0:
-                            self.fitnesses[fi] += 50
+                        if enemy_idx < len(self.fitnesses):
+                            self.fitnesses[enemy_idx] += 50
         else:
             player.isShooting = False
 
     def _get_dampen_factor(self):
         if self.round <= 1:
-            return 0.50
+            return 0.40
         elif self.round == 2:
-            return 0.25
+            return 0.20
         return 0.0
 
     def _get_stat_multiplier(self):
-        return 1.0 + (self.round - 1) * 0.155
+        # scaling getting harder. i'm tired of this math.
+        return 1.0 + (self.round - 1) * 0.18
 
     def _update_enemies(self, dt):
         global _bullet_id_counter
@@ -438,7 +436,7 @@ class GameEngine:
 
         stat_mult = self._get_stat_multiplier()
 
-        for ei, enemy in enumerate(enemies):
+        for enemy_idx, enemy in enumerate(enemies):
             if enemy.state == EnemyState.DEAD:
                 continue
 
@@ -461,9 +459,11 @@ class GameEngine:
             if enemy.canSeePlayer:
                 enemy.lastKnownPlayerX = player.x
                 enemy.lastKnownPlayerY = player.y
+                if enemy_idx < len(self.time_spent_seeing_player):
+                    self.time_spent_seeing_player[enemy_idx] += dt
 
-            # enemy state, chase or patrol. whatever.
-            if enemy.distanceToPlayer < enemy.alertRadius and enemy.canSeePlayer:
+            # chase or patrol. hope LoS works.
+            if enemy.distanceToPlayer < enemy.alertRadius and (enemy.canSeePlayer or enemy.state == EnemyState.CHASE):
                 enemy.state = EnemyState.CHASE
             else:
                 enemy.state = EnemyState.PATROL
@@ -474,169 +474,131 @@ class GameEngine:
 
                 turn_left = outputs[2]
                 turn_right = outputs[3]
-                shoot = outputs[4]
+                shoot_val = outputs[4]
 
-                nn_turn_speed = (turn_left - turn_right) * 2.2
+                nn_turn_speed = (turn_left - turn_right) * 2.5
                 enemy.angle += nn_turn_speed * dt
             else:
-                outputs = None  # not used for patrol
-                shoot = 0
+                outputs = None
+                shoot_val = 0
 
             old_x, old_y = enemy.x, enemy.y
             self._move_enemy(enemy, game_map, dt, outputs, player)
 
-            # tracking positions for stuck stuff
+            # stuck detection. why do they keep hitting walls?
             enemy.recent_positions.append((enemy.x, enemy.y))
-            if len(enemy.recent_positions) > 20:
+            if len(enemy.recent_positions) > 30:
                 enemy.recent_positions.pop(0)
 
-            # clipping again? revert.
             if not is_walkable(game_map, enemy.x, enemy.y):
                 enemy.x = old_x
                 enemy.y = old_y
-                # clipping still happens. ugh.
 
-            # stuck detection
             moved_dist = math.sqrt((enemy.x - old_x) ** 2 + (enemy.y - old_y) ** 2)
-            moving_intent = (
-                (abs(outputs[0] - outputs[1]) > 0.15)
-                if outputs
-                else (enemy.state == EnemyState.PATROL)
-            )
-            min_move_threshold = 0.02 + enemy.speed * dt * 0.3
+            
+            moving_intent = False
+            if outputs:
+                if abs(outputs[0] - outputs[1]) > 0.1 or abs(outputs[5]) > 0.1:
+                    moving_intent = True
+            elif enemy.state == EnemyState.PATROL:
+                moving_intent = True
+
+            min_move_threshold = 0.01 + enemy.speed * dt * 0.2
             if moving_intent and moved_dist < min_move_threshold:
                 enemy.stuckTimer += dt
             else:
                 enemy.stuckTimer = max(0, enemy.stuckTimer - dt * 2)
 
-            # corner stuck
             corner_stuck = False
-            if len(enemy.recent_positions) >= 20:
-                start_pos = enemy.recent_positions[0]
-                end_pos = enemy.recent_positions[-1]
-                total_moved = math.sqrt(
-                    (end_pos[0] - start_pos[0]) ** 2 + (end_pos[1] - start_pos[1]) ** 2
-                )
-                corner_stuck = total_moved < 0.5 and moving_intent
+            if len(enemy.recent_positions) >= 30:
+                start_p = enemy.recent_positions[0]
+                end_p = enemy.recent_positions[-1]
+                total_m = math.sqrt((end_p[0] - start_p[0])**2 + (end_p[1] - start_p[1])**2)
+                corner_stuck = total_m < 0.4 and moving_intent
 
-            stuck_threshold = 0.3 if enemy.speed > 3.0 else 0.7
-            if enemy.stuckTimer > stuck_threshold or corner_stuck:
-                back_dist = enemy.speed * dt * 2.0
+            st_threshold = 0.4 if enemy.speed > 3.0 else 0.8
+            if enemy.stuckTimer > st_threshold or corner_stuck:
+                back_dist = enemy.speed * dt * 2.5
                 back_x = enemy.x - math.cos(enemy.angle) * back_dist
                 back_y = enemy.y - math.sin(enemy.angle) * back_dist
                 if is_walkable(game_map, back_x, back_y):
                     enemy.x = back_x
                     enemy.y = back_y
-                # turn options for corners
-                turn_options = [
-                    math.pi / 2,
-                    -math.pi / 2,
-                    math.pi,
-                    math.pi / 4,
-                    -math.pi / 4,
-                ]
-                for turn in turn_options:
-                    test_angle = enemy.angle + turn
-                    test_x = enemy.x + math.cos(test_angle) * enemy.speed * dt
-                    test_y = enemy.y + math.sin(test_angle) * enemy.speed * dt
+                
+                t_options = [math.pi/2, -math.pi/2, math.pi, math.pi/4, -math.pi/4]
+                random.shuffle(t_options)
+                for turn in t_options:
+                    test_a = enemy.angle + turn
+                    test_x = enemy.x + math.cos(test_a) * enemy.speed * dt
+                    test_y = enemy.y + math.sin(test_a) * enemy.speed * dt
                     if is_walkable(game_map, test_x, test_y):
-                        enemy.angle = test_angle
+                        enemy.angle = test_a
                         break
                 else:
-                    enemy.angle += random.uniform(
-                        -math.pi, math.pi
-                    )  # random if none work
+                    enemy.angle += random.uniform(-math.pi, math.pi)
+                
                 enemy.stuckTimer = 0
-                enemy.recent_positions.clear()  # reset tracking
+                enemy.recent_positions.clear()
 
-            effective_shoot_cooldown = enemy.shootCooldown
-            effective_damage = enemy.damage * stat_mult
-            effective_accuracy = min(1.0, enemy.accuracy * stat_mult)
-
-            shoot_threshold = 0.45  # lower threshold for more shooting
+            eff_cooldown = enemy.shootCooldown
+            eff_damage = enemy.damage * stat_mult
+            eff_accuracy = min(1.0, enemy.accuracy * stat_mult)
 
             enemy.shootTimer -= dt
 
             should_shoot = (
-                shoot > shoot_threshold
+                shoot_val > 0.4
                 and enemy.canSeePlayer
                 and enemy.reactionTimer <= 0
                 and enemy.shootTimer <= 0
                 and enemy.distanceToPlayer < attack_radius
-                and effective_damage > 0
+                and eff_damage > 0
             )
 
-            if (
-                enemy.canSeePlayer
-                and enemy.reactionTimer <= 0
-                and enemy.shootTimer <= 0
-                and enemy.distanceToPlayer < attack_radius
-                and effective_damage > 0
-            ):
-                if not should_shoot:
-                    should_shoot = shoot > 0.35
-
             if should_shoot:
-                if not should_shoot:
-                    should_shoot = shoot > 0.35
+                enemy.shootTimer = eff_cooldown
+                if enemy_idx < len(self.bullets_fired):
+                    self.bullets_fired[enemy_idx] += 1
 
-            if should_shoot:
-                enemy.shootTimer = effective_shoot_cooldown
+                spr_val = (1 - eff_accuracy) * 0.35
+                aim_a = math.atan2(player.y - enemy.y, player.x - enemy.x)
+                fin_a = aim_a + (random.random() - 0.5) * spr_val
 
-                spread = (1 - effective_accuracy) * 0.3
-                aim_angle = math.atan2(player.y - enemy.y, player.x - enemy.x)
-                final_angle = aim_angle + (random.random() - 0.5) * spread
-
-                bullets.append(
+                self.bullets.append(
                     Bullet(
                         id=_bullet_id_counter,
                         x=enemy.x,
                         y=enemy.y,
-                        angle=final_angle,
+                        angle=fin_a,
                         speed=BULLET_SPEED * 0.8,
-                        damage=int(effective_damage),
+                        damage=int(eff_damage),
                         fromPlayer=False,
                         life=2.0,
                     )
                 )
                 _bullet_id_counter += 1
-
-                self._spawn_muzzle_particles(enemy.x, enemy.y, final_angle)
+                self._spawn_muzzle_particles(enemy.x, enemy.y, fin_a)
 
             if enemy.strafeTimer > 0:
                 enemy.strafeTimer -= dt
             else:
                 enemy.strafeDir *= -1
                 if enemy.enemyClass == EnemyClass.SCOUT:
-                    enemy.strafeTimer = 0.3 + random.random() * 0.4
+                    enemy.strafeTimer = 0.2 + random.random() * 0.5
                 else:
-                    enemy.strafeTimer = 0.8 + random.random() * 1.5
+                    enemy.strafeTimer = 0.6 + random.random() * 1.2
 
-    def _build_nn_inputs(self, enemy, player, _game_map=None):
-        normalized_dist = min(1, enemy.distanceToPlayer / 20)
-        angle_diff = normalize_angle(enemy.angleToPlayer - enemy.angle) / math.pi
-        can_see = 1 if enemy.canSeePlayer else 0
-        health_ratio = enemy.health / enemy.maxHealth if enemy.maxHealth > 0 else 0
-        player_angle_to_enemy = (
-            normalize_angle(
-                math.atan2(enemy.y - player.y, enemy.x - player.x) - player.angle
-            )
-            / math.pi
-        )
+    def _build_nn_inputs(self, enemy, player):
+        n_dist = min(1, enemy.distanceToPlayer / 20)
+        a_diff = normalize_angle(enemy.angleToPlayer - enemy.angle) / math.pi
+        c_see = 1 if enemy.canSeePlayer else 0
+        h_ratio = enemy.health / enemy.maxHealth if enemy.maxHealth > 0 else 0
+        p_angle = normalize_angle(math.atan2(enemy.y-player.y, enemy.x-player.x) - player.angle) / math.pi
         dx = (enemy.lastKnownPlayerX - enemy.x) / 20
         dy = (enemy.lastKnownPlayerY - enemy.y) / 20
-        strafe = enemy.strafeDir
+        strf = enemy.strafeDir
 
-        return [
-            normalized_dist,
-            angle_diff,
-            can_see,
-            health_ratio,
-            player_angle_to_enemy,
-            dx,
-            dy,
-            strafe,
-        ]
+        return [n_dist, a_diff, c_see, h_ratio, p_angle, dx, dy, strf]
 
     def _move_enemy(self, enemy, game_map, dt, outputs, player):
         if enemy.state == EnemyState.DEAD:
@@ -645,339 +607,189 @@ class GameEngine:
         if enemy.state == EnemyState.PATROL:
             enemy.roamTimer += dt
             if enemy.roamTimer > 2.0:
-                enemy.angle += (random.random() - 0.5) * 0.5
+                enemy.angle += (random.random() - 0.5) * 0.7
                 enemy.roamTimer = 0.0
-            forward_amount = enemy.speed * dt * 0.5
-            strafe_amount = 0
-            toward_player_x = math.cos(enemy.angle)
-            toward_player_y = math.sin(enemy.angle)
-            perp_x = -toward_player_y
-            perp_y = toward_player_x
-            vx = toward_player_x * forward_amount + perp_x * strafe_amount
-            vy = toward_player_y * forward_amount + perp_y * strafe_amount
+            f_amt = enemy.speed * dt * 0.5
+            s_amt = 0
+            t_x = math.cos(enemy.angle)
+            t_y = math.sin(enemy.angle)
         else:
-            # chasing with nn
-            move_forward = outputs[0]
-            move_back = outputs[1]
-            strafe_out = outputs[5]
+            move_f = outputs[0]
+            move_b = outputs[1]
+            strf_o = outputs[5]
+            t_x = math.cos(enemy.angleToPlayer)
+            t_y = math.sin(enemy.angleToPlayer)
+            f_amt = (move_f - move_b) * enemy.speed * dt
+            s_amt = strf_o * enemy.speed * dt
 
-            toward_player_x = math.cos(enemy.angleToPlayer)
-            toward_player_y = math.sin(enemy.angleToPlayer)
-            perp_x = -toward_player_y
-            perp_y = toward_player_x
+        p_x = -t_y
+        p_y = t_x
+        vx = t_x * f_amt + p_x * s_amt
+        vy = t_y * f_amt + p_y * s_amt
 
-            forward_amount = (move_forward - move_back) * enemy.speed * dt
-            strafe_amount = strafe_out * enemy.speed * dt
-
-            vx = toward_player_x * forward_amount + perp_x * strafe_amount
-            vy = toward_player_y * forward_amount + perp_y * strafe_amount
-
-        margin = 0.5 + enemy.speed * 0.1  # larger margin for fast enemies
+        mgn = 0.4 + enemy.speed * 0.1
         nx = enemy.x + vx
         ny = enemy.y + vy
-        sign_vx = 1 if vx > 0 else (-1 if vx < 0 else 0)
-        sign_vy = 1 if vy > 0 else (-1 if vy < 0 else 0)
-        moved = False
-
-        # check for walls ahead
-        look_ahead = 1.0 + enemy.speed * dt * 2
-        ahead_x = enemy.x + math.cos(enemy.angle) * look_ahead
-        ahead_y = enemy.y + math.sin(enemy.angle) * look_ahead
-        wall_ahead = not has_line_of_sight(game_map, enemy.x, enemy.y, ahead_x, ahead_y)
-
-        if wall_ahead:
-            # turn a bit to avoid wall
-            enemy.angle += random.choice([-0.3, 0.3])
-
-        if is_walkable(game_map, nx + sign_vx * margin, enemy.y):
+        
+        # collision checks. i'm done with these.
+        mov = False
+        if is_walkable(game_map, nx + (1 if vx > 0 else -1 if vx < 0 else 0) * mgn, enemy.y):
             enemy.x = nx
-            moved = True
-        else:
-            # Try larger angle adjustments
-            for angle_adj in [0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.8, -0.8]:
-                test_angle = enemy.angle + angle_adj
-                test_vx = math.cos(test_angle) * forward_amount + perp_x * strafe_amount
-                test_nx = enemy.x + test_vx
-                if is_walkable(game_map, test_nx + sign_vx * margin, enemy.y):
-                    enemy.x = test_nx
-                    enemy.angle = test_angle
-                    moved = True
-                    break
-            if not moved:
-                # Back off more
-                back_vx = -vx * 0.7
-                back_nx = enemy.x + back_vx
-                if is_walkable(game_map, back_nx + sign_vx * margin, enemy.y):
-                    enemy.x = back_nx
-                    moved = True
-                else:
-                    # Force larger random direction
-                    enemy.angle += (random.random() - 0.5) * 2.0
-
-        if is_walkable(game_map, enemy.x, ny + sign_vy * margin):
+            mov = True
+        
+        if is_walkable(game_map, enemy.x, ny + (1 if vy > 0 else -1 if vy < 0 else 0) * mgn):
             enemy.y = ny
-            moved = True
-        else:
-            # same for y
-            for angle_adj in [0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.8, -0.8]:
-                test_angle = enemy.angle + angle_adj
-                test_vy = math.sin(test_angle) * forward_amount + perp_y * strafe_amount
-                test_ny = enemy.y + test_vy
-                if is_walkable(game_map, enemy.x, test_ny + sign_vy * margin):
-                    enemy.y = test_ny
-                    enemy.angle = test_angle
-                    moved = True
-                    break
-            if not moved:
-                back_vy = -vy * 0.7
-                back_ny = enemy.y + back_vy
-                if is_walkable(game_map, enemy.x, back_ny + sign_vy * margin):
-                    enemy.y = back_ny
-                    moved = True
-                else:
-                    enemy.angle += (random.random() - 0.5) * 2.0
+            mov = True
 
-        # Stuck detection
-        enemy.stuckTimer += 0 if moved else dt
-        if enemy.stuckTimer > 2.0:  # More sensitive, 2 seconds
-            # Force random direction
-            enemy.angle += (random.random() - 0.5) * 3.0  # More aggressive
-            enemy.stuckTimer = 0
+        if not mov and enemy.state != EnemyState.PATROL:
+             enemy.stuckTimer += dt
 
     def _update_bullets(self, dt):
-        bullets = self.bullets
-        game_map = self.map
-        player = self.player
-        enemies = self.enemies
-
-        i = len(bullets) - 1
-        while i >= 0:
-            b = bullets[i]
+        # iterate backwards or things blow up
+        for i in range(len(self.bullets) - 1, -1, -1):
+            b = self.bullets[i]
             b.life -= dt
-
             b.x += math.cos(b.angle) * b.speed * dt
             b.y += math.sin(b.angle) * b.speed * dt
 
             hit = False
-
-            if not is_walkable(game_map, b.x, b.y):
+            if not is_walkable(self.map, b.x, b.y):
                 self._spawn_hit_particles(b.x, b.y, (255, 102, 0))
                 hit = True
 
             if not hit and b.fromPlayer:
-                for ei, enemy in enumerate(enemies):
+                for enemy_idx, enemy in enumerate(self.enemies):
                     if enemy.state == EnemyState.DEAD:
                         continue
-                    dx = enemy.x - b.x
-                    dy = enemy.y - b.y
-                    if dx * dx + dy * dy < 0.5:
+                    dx, dy = enemy.x - b.x, enemy.y - b.y
+                    if dx*dx + dy*dy < 0.6:
                         enemy.health -= b.damage
                         self._spawn_hit_particles(b.x, b.y, (255, 34, 0))
                         hit = True
-
-                        if ei < len(self.damage_dealt):
-                            self.damage_dealt[ei] += b.damage
-
+                        if enemy_idx < len(self.damage_dealt):
+                            self.damage_dealt[enemy_idx] += b.damage
                         if enemy.health <= 0:
                             enemy.state = EnemyState.DEAD
                             self.score += 100 * self.round
-                            self.money += max(
-                                1, int((self.score / 10) * (self.round * 0.2))
-                            )
+                            self.money += max(1, int(self.round * 1.5))
                             self._spawn_death_particles(enemy.x, enemy.y)
-
-                            fi = next(
-                                (
-                                    idx
-                                    for idx, e in enumerate(enemies)
-                                    if e.id == enemy.id
-                                ),
-                                -1,
-                            )
-                            if fi >= 0:
-                                self.fitnesses[fi] += 50
+                            if enemy_idx < len(self.fitnesses):
+                                self.fitnesses[enemy_idx] += 60
                         break
 
             if not hit and not b.fromPlayer:
-                dx = player.x - b.x
-                dy = player.y - b.y
-                if dx * dx + dy * dy < 0.5:
-                    damage = b.damage
-                    armor = player.armor
-                    if armor > 0:
-                        reduction = min(armor * 0.1, 0.8)
-                        damage = int(damage * (1 - reduction))
-                    player.health -= damage
-                    self.flash_alpha = min(1, self.flash_alpha + 0.3)
+                dx, dy = self.player.x - b.x, self.player.y - b.y
+                if dx*dx + dy*dy < 0.6:
+                    dmg = b.damage
+                    if self.player.armor > 0:
+                        red = min(self.player.armor * 0.1, 0.75)
+                        dmg = int(dmg * (1 - red))
+                    self.player.health -= dmg
+                    self.flash_alpha = min(1, self.flash_alpha + 0.35)
                     hit = True
-
-                    for fi in range(len(enemies)):
-                        if enemies[fi].state != EnemyState.DEAD:
-                            self.fitnesses[fi] = self.fitnesses[fi] + b.damage * 0.5
-
-                    if player.health <= 0:
-                        player.health = 0
+                    for fi in range(len(self.enemies)):
+                        if self.enemies[fi].state != EnemyState.DEAD:
+                            self.fitnesses[fi] += b.damage * 0.7
+                    if self.player.health <= 0:
+                        self.player.health = 0
                         self.phase = GamePhase.DEAD
 
             if hit or b.life <= 0:
-                bullets.pop(i)
-            i -= 1
+                self.bullets.pop(i)
 
-            # bullet caps. old code didnt have this but chromebooks die
-            if len(bullets) > 25:
-               bullets.pop(0)
+        # bullet cap. too many bullets = lag.
+        if len(self.bullets) > 40:
+           self.bullets = self.bullets[-40:]
 
     def _update_particles(self, dt):
-        particles = self.particles
-        i = len(particles) - 1
-        while i >= 0:
-            p = particles[i]
+        for i in range(len(self.particles) - 1, -1, -1):
+            p = self.particles[i]
             p.x += p.vx * dt
             p.y += p.vy * dt
-            p.vx *= 0.95
-            p.vy *= 0.95
+            p.vx *= 0.94
+            p.vy *= 0.94
             p.life -= dt
             if p.life <= 0:
-                particles.pop(i)
-            i -= 1
+                self.particles.pop(i)
 
     def _check_round_end(self):
         if self.phase != GamePhase.PLAYING:
             return
-        all_dead = all(e.state == EnemyState.DEAD for e in self.enemies)
-        if all_dead:
+        
+        all_d = True
+        for e in self.enemies:
+            if e.state != EnemyState.DEAD:
+                all_d = False
+                break
+        
+        if all_d:
             self.phase = GamePhase.ROUND_END
             for fi in range(len(self.enemies)):
-                self.fitnesses[fi] = (
-                    self.fitnesses[fi]
-                    + (self.damage_dealt[fi] if fi < len(self.damage_dealt) else 0)
-                    * 0.8
-                )
+                # messy fitness math.
+                d_bonus = (self.damage_dealt[fi] if fi < len(self.damage_dealt) else 0) * 1.2
+                v_bonus = (self.time_spent_seeing_player[fi] if fi < len(self.time_spent_seeing_player) else 0) * 2.5
+                s_bonus = (self.bullets_fired[fi] if fi < len(self.bullets_fired) else 0) * 5.0
+                self.fitnesses[fi] += d_bonus + v_bonus + s_bonus
+                
+                en = self.enemies[fi]
+                d_err = abs(en.distanceToPlayer - 10)
+                self.fitnesses[fi] += max(0, 15 - d_err) * 1.5
 
-            for fi, enemy in enumerate(self.enemies):
-                proximity_score = max(0, 20 - enemy.distanceToPlayer) * 0.5
-                self.fitnesses[fi] += proximity_score
-
-                if enemy.canSeePlayer:
-                    self.fitnesses[fi] += 5
-
-    def evolve_genomes(self, mutation_round):
-        mutation_rate = MUTATION_RATE_BASE + (
-            -0.01 if mutation_round > 5 else 0.005 * (5 - mutation_round)
-        )
-        mutation_scale = MUTATION_SCALE_BASE * max(0.2, 1 - mutation_round * 0.07)
-
+    def evolve_genomes(self, m_round):
+        m_rate = MUTATION_RATE_BASE + (-0.02 if m_round > 5 else 0.008 * (5 - m_round))
+        m_scale = MUTATION_SCALE_BASE * max(0.15, 1 - m_round * 0.08)
         new_pools = {}
 
-        for class_key in CLASS_GENOME_KEYS:
-            other_key = "scout" if class_key == "tank" else "tank"
-            other_genomes = self.genome_pools.get(other_key, [])
+        for c_key in CLASS_GENOME_KEYS:
+            c_indices = [i for i, e in enumerate(self.enemies) if e.enemyClass.value == c_key]
+            c_genomes = [self.enemies[i].genome for i in c_indices]
+            c_fits = [self.fitnesses[i] for i in c_indices]
 
-            class_indices = [
-                i for i, e in enumerate(self.enemies) if e.enemyClass.value == class_key
-            ]
-            class_genomes = [
-                self.enemies[i].genome for i in class_indices if i < len(self.enemies)
-            ]
-            class_fitnesses = [
-                self.fitnesses[i] for i in class_indices if i < len(self.fitnesses)
-            ]
-
-            if len(class_genomes) < 2:
-                new_pools[class_key] = [
-                    mutate(g, mutation_rate, mutation_scale) for g in class_genomes
-                ]
+            if len(c_genomes) < 2:
+                # just mutate what we have i guess
+                new_pools[c_key] = [mutate(g, m_rate, m_scale) for g in c_genomes]
                 continue
 
-            # Evolve with occasional cross-breeding
-            paired = [
-                {"genome": g, "fitness": f}
-                for g, f in zip(class_genomes, class_fitnesses)
-            ]
-            paired.sort(key=lambda x: x["fitness"], reverse=True)
+            # sort by fitness. elitism.
+            pairs = [{"genome": g, "fitness": f} for g, f in zip(c_genomes, c_fits)]
+            pairs.sort(key=lambda x: x["fitness"], reverse=True)
 
             new_pop = []
-            for i in range(min(ELITE_COUNT, len(paired))):
-                new_pop.append(list(paired[i]["genome"]))
+            for i in range(min(ELITE_COUNT, len(pairs))):
+                new_pop.append(list(pairs[i]["genome"]))
 
-            while len(new_pop) < len(class_genomes):
-                p1 = _tournament_select(paired, 3)
-                if random.random() < 0.2 and other_genomes:  # 20% chance cross-breed
-                    p2_genome = random.choice(other_genomes)
-                else:
-                    p2 = _tournament_select(paired, 3)
-                    p2_genome = p2["genome"]
-                child = crossover(p1["genome"], p2_genome)
-                child = mutate(child, mutation_rate, mutation_scale)
-                new_pop.append(child)
-                # cross-breeding might be messing everything up, i don't know
+            while len(new_pop) < POPULATION_SIZE:
+                p1 = _tournament_select(pairs, 3)
+                p2 = _tournament_select(pairs, 3)
+                ch = crossover(p1["genome"], p2["genome"])
+                ch = mutate(ch, m_rate, m_scale)
+                new_pop.append(ch)
 
-            new_pools[class_key] = new_pop
+            new_pools[c_key] = new_pop
 
-        all_fitnesses = self.fitnesses
-        max_fit = max(all_fitnesses) if all_fitnesses else 0
-        avg_fit = sum(all_fitnesses) / len(all_fitnesses) if all_fitnesses else 0
-
-        self.generation_history.append(
-            Generation(
-                round=self.round,
-                bestFitness=max_fit,
-                avgFitness=avg_fit,
-                population=POPULATION_SIZE * len(CLASS_GENOME_KEYS),
-            )
-        )
+        # log history. why do i keep track of this?
+        all_f = self.fitnesses
+        m_fit = max(all_f) if all_f else 0
+        a_fit = sum(all_f) / len(all_f) if all_f else 0
+        self.generation_history.append(Generation(round=self.round, bestFitness=m_fit, avgFitness=a_fit, population=POPULATION_SIZE * len(CLASS_GENOME_KEYS)))
 
         return new_pools
 
     def _spawn_muzzle_particles(self, x, y, angle):
-        # cut particles for fps on chromebooks. still looks ok
         for _ in range(1):
-            spread = (random.random() - 0.5) * 0.08
-            spd = 1.5 + random.random() * 1.0
-            self.particles.append(
-                Particle(
-                    x=x,
-                    y=y,
-                    vx=math.cos(angle + spread) * spd,
-                    vy=math.sin(angle + spread) * spd,
-                    life=0.08 + random.random() * 0.05,
-                    maxLife=0.13,
-                    color=(255, 221, 68),
-                    size=0.04,
-                )
-            )
+            spd = 1.5 + random.random()
+            self.particles.append(Particle(x=x, y=y, vx=math.cos(angle)*spd, vy=math.sin(angle)*spd, life=0.1, maxLife=0.13, color=(255, 221, 68), size=0.04))
 
-    def _spawn_hit_particles(self, x, y, color):
-        # cut particles for fps on chromebooks. still looks ok
+    def _spawn_hit_particles(self, x, y, col):
+        # todo: add more particles if not on a chromebook
         for _ in range(3):
             a = random.random() * math.pi * 2
-            self.particles.append(
-                Particle(
-                    x=x,
-                    y=y,
-                    vx=math.cos(a) * (1 + random.random() * 2),
-                    vy=math.sin(a) * (1 + random.random() * 2),
-                    life=0.2 + random.random() * 0.2,
-                    maxLife=0.4,
-                    color=color,
-                    size=0.05 + random.random() * 0.05,
-                )
-            )
+            s = 1 + random.random() * 2
+            self.particles.append(Particle(x=x, y=y, vx=math.cos(a)*s, vy=math.sin(a)*s, life=0.3, maxLife=0.4, color=col, size=0.05))
 
     def _spawn_death_particles(self, x, y):
-        # cut particles for fps on chromebooks. still looks ok
+        # death is messy.
         for _ in range(8):
             a = random.random() * math.pi * 2
-            speed = 1 + random.random() * 4
-            self.particles.append(
-                Particle(
-                    x=x,
-                    y=y,
-                    vx=math.cos(a) * speed,
-                    vy=math.sin(a) * speed,
-                    life=0.5 + random.random() * 0.5,
-                    maxLife=1.0,
-                    color=(255, 34, 0) if random.random() > 0.5 else (255, 136, 0),
-                    size=0.08 + random.random() * 0.1,
-                )
-            )
+            s = 1 + random.random() * 4
+            self.particles.append(Particle(x=x, y=y, vx=math.cos(a)*s, vy=math.sin(a)*s, life=0.7, maxLife=1.0, color=(255, 34, 0), size=0.1))
