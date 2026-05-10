@@ -684,6 +684,9 @@ class GameEngine:
                     if self.player.armor > 0:
                         red = min(self.player.armor * 0.1, 0.75)
                         dmg = int(dmg * (1 - red))
+                        # armor was rounding to 0. taking at least 1 damage now.
+                        if b.damage > 0 and dmg <= 0:
+                            dmg = 1
                     self.player.health -= dmg
                     self.flash_alpha = min(1, self.flash_alpha + 0.35)
                     hit = True

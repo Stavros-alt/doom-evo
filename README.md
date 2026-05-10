@@ -1,20 +1,26 @@
 # DOOM.EVO
-first-person shooter with evolving neural network enemies. it's built from scratch and it actually works. 
+evolving neural network shooter. i built this because i was bored and wanted to see if enemies could actually learn.
 
-## Downloads
-if you don't want to install python and deal with dependencies, just go to the **Releases** section on the sidebar on the right. i've uploaded standalone binaries for windows and linux there. just download and run.
-
-### Linux Compatibility Note
-if the standalone binary fails with a **`GLIBC_ABI_GNU2_TLS`** or similar error, your linux distribution (like older versions of linux mint) is incompatible with the pre-built binary. in this case, please follow the **Source Setup** instructions below to run the game directly.
+## Overview
+the enemies aren't hardcoded. they use a genetic algorithm to evolve their neural networks based on how you play. if you keep winning, the next generation will be smarter. if you suck, they stay stupid. it's basically a mirror for your skill level.
 
 ## Why this exists
-i wanted to see if i could make enemies that actually learn instead of just walking in straight lines. they use a genetic algorithm, so they evolve based on how you play. if they keep killing you, it's because the neural networks are working. if you're bad, they'll stay stupid. it's basically a mirror for your skill level.
+i was tired of static ai in games. every round, the "fittest" enemies survive and pass on their brain weights. after a few rounds, they'll start strafing, dodging, and actually aiming instead of just standing there. 
 
-## Source Setup
-if you actually want to run it from source for some reason:
-1. python 3.10+
+## Setup
+### Linux/Mac (the only ones i care about)
+1. get python 3.10+
 2. `pip install -r requirements.txt`
 3. `python3 main.py`
+
+### Windows
+you're on your own. it might work with `python main.py` if you have everything installed correctly. if it doesn't, don't ask me.
+
+## Configuration
+everything is in `game_types.py` or hardcoded. i don't have time for fancy config files.
+- `POPULATION_SIZE`: how many enemies in a generation.
+- `MUTATION_RATE_BASE`: how much their brains change.
+- `ENEMY_CLASS_CONFIG`: stats like health and damage for different enemy types.
 
 ## Usage
 - **WASD**: move. 
@@ -22,8 +28,10 @@ if you actually want to run it from source for some reason:
 - **Left Click/Space**: shoot. 
 - **P**: pause. 
 - **ESC**: menu. 
+- **1-6**: buy upgrades in the shop between rounds.
 
-## Notes
-- pathfinding is "walk toward player and pray".
-- shop prices are balanced. i spent way too much time on the math.
-- sometimes enemies get stuck in walls. just kill them and move on.
+## Known Issues
+- pathfinding is basically "walk toward player and pray".
+- enemies sometimes clip into walls. i'm not fixing it today.
+- if you buy a lot of armor, you used to be immortal. i fixed it, you'll still take at least 1 damage.
+-Standalone binaries are in the Releases section if you're lazy.
