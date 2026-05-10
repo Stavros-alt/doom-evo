@@ -1,34 +1,26 @@
 # DOOM.EVO
+a first-person shooter with evolving neural network enemies. it's built from scratch and it actually works. 
 
-A first-person shooter with evolving neural network enemies.
+## Downloads
+if you don't want to install python and deal with dependencies, just go to the **Releases** section on the sidebar on the right. i've uploaded standalone binaries for windows and linux there. just download and run.
 
-## Installation
+## Why this exists
+i wanted to see if i could make enemies that actually learn instead of just walking in straight lines. they use a genetic algorithm, so they evolve based on how you play. if they keep killing you, it's because the neural networks are working. if you're bad, they'll stay stupid. it's basically a mirror for your skill level.
 
-```bash
-pip install -r requirements.txt
-```
+## Source Setup
+if you actually want to run it from source for some reason:
+1. python 3.10+
+2. `pip install -r requirements.txt`
+3. `python3 main.py`
 
-## System Requirements
+## Usage
+- **WASD**: move. 
+- **Mouse**: look. 
+- **Left Click/Space**: shoot. 
+- **P**: pause. 
+- **ESC**: menu. 
 
-- Python 3.8+
-- Minimum: Chromebook with integrated graphics, 4GB RAM
-- Recommended: Desktop PC with dedicated GPU
-
-## Performance Tips
-
-For low-end hardware like Chromebooks:
-- Set LOW_QUALITY=True in main.py (enabled by default)
-- Reduce window size from default
-- Game is designed to run locally; cloud execution may not work
-
-## Running
-
-```bash
-python main.py
-```
-
-## Controls
-
-WASD: Move/Strafe, Mouse: Look, Left Click/Space: Shoot, P: Pause, ESC: Menu.
-
-Enemies evolve via genetic algorithm each round.
+## Notes
+- pathfinding is "walk toward player and pray".
+- shop prices are balanced. i spent way too much time on the math.
+- sometimes enemies get stuck in walls. just kill them and move on.
