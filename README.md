@@ -1,5 +1,5 @@
 # DOOM.EVO
-a first-person shooter with evolving neural network enemies. it's built from scratch and it actually works. 
+first-person shooter with evolving neural network enemies. it's built from scratch and it actually works. 
 
 ## Downloads
 if you don't want to install python and deal with dependencies, just go to the **Releases** section on the sidebar on the right. i've uploaded standalone binaries for windows and linux there. just download and run.

@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 
-# i'm only writing this because you asked. 
+# i hate building binaries but here we are.
 # it builds both linux and windows binaries.
 # you need wine installed for the windows one to work.
 
@@ -26,7 +26,7 @@ def build():
     run_command(['pyinstaller', '--name=DOOM_EVO'] + base_params)
 
     print("\n--- building windows binary (requires wine) ---")
-    # we installed python 3.10 in wine earlier, so this should work.
+    # assuming wine has python installed. if not, whatever.
     run_command(['wine', 'python', '-m', 'PyInstaller', '--name=DOOM_EVO_WIN'] + base_params)
 
     print("\nfinished. check the 'dist' folder for your binaries.")

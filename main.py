@@ -6,7 +6,7 @@ try:
     import pygame
 except ImportError:
     print("error: pygame not found.")
-    print("please run './run.sh' (linux) or 'run.bat' (windows) to set everything up.")
+    print("please run the build script or use the standalone binaries.")
     sys.exit(1)
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
