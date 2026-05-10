@@ -1,18 +1,25 @@
+# python stuff
 __pycache__/
 *.py[cod]
 *$py.class
-.ruff_cache/
 .venv/
+env/
 venv/
 ENV/
-env/
+
+# build stuff
 build/
 dist/
-*.egg-info/
-.directory
-.trashinfo
-*.desktop
-.env
-*.log
-*.tmp
+*.spec
+
+# system stuff
 .DS_Store
+Thumbs.db
+.directory
+
+# project stuff
+DOOM_EVO
+DOOM_EVO_WIN.exe
+GLCache/
+.pytest_cache/
+.ruff_cache/

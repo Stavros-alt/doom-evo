@@ -1,6 +1,13 @@
 import os
 import json
-import pygame
+import sys
+
+try:
+    import pygame
+except ImportError:
+    print("error: pygame not found.")
+    print("please run './run.sh' (linux) or 'run.bat' (windows) to set everything up.")
+    sys.exit(1)
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
