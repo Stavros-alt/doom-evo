@@ -4,6 +4,9 @@ first-person shooter with evolving neural network enemies. it's built from scrat
 ## Downloads
 if you don't want to install python and deal with dependencies, just go to the **Releases** section on the sidebar on the right. i've uploaded standalone binaries for windows and linux there. just download and run.
 
+### Linux Compatibility Note
+if the standalone binary fails with a **`GLIBC_ABI_GNU2_TLS`** or similar error, your linux distribution (like older versions of linux mint) is incompatible with the pre-built binary. in this case, please follow the **Source Setup** instructions below to run the game directly.
+
 ## Why this exists
 i wanted to see if i could make enemies that actually learn instead of just walking in straight lines. they use a genetic algorithm, so they evolve based on how you play. if they keep killing you, it's because the neural networks are working. if you're bad, they'll stay stupid. it's basically a mirror for your skill level.
 
