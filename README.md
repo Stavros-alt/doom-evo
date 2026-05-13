@@ -1,37 +1,61 @@
 # DOOM.EVO
-evolving neural network shooter. i built this because i was bored and wanted to see if enemies could actually learn.
+evolving neural network fps. the enemies learn from your mistakes.
 
 ## Overview
-the enemies aren't hardcoded. they use a genetic algorithm to evolve their neural networks based on how you play. if you keep winning, the next generation will be smarter. if you suck, they stay stupid. it's basically a mirror for your skill level.
+every enemy has a genome driving its neural network. you kill them, the survivors breed, next round is harder. if you're bad they stay bad. it's a dark mirror or whatever.
 
-## Why this exists
-i was tired of static ai in games. every round, the "fittest" enemies survive and pass on their brain weights. after a few rounds, they'll start strafing, dodging, and actually aiming instead of just standing there. 
+walls have textures now. ceiling has stars. the floor is grimy. i spent way too long on this.
 
 ## Setup
-### Linux/Mac (the only ones i care about)
-1. get python 3.10+
-2. `pip install -r requirements.txt`
-3. `python3 main.py`
+### Linux/Mac
+```
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 main.py
+```
+requires python 3.10+, pygame, numpy.
 
 ### Windows
-you're on your own. it might work with `python main.py` if you have everything installed correctly. if it doesn't, don't ask me.
+install python. run `python main.py`. if it crashes that's a you problem.
 
 ## Configuration
-everything is in `game_types.py` or hardcoded. i don't have time for fancy config files.
-- `POPULATION_SIZE`: how many enemies in a generation.
-- `MUTATION_RATE_BASE`: how much their brains change.
-- `ENEMY_CLASS_CONFIG`: stats like health and damage for different enemy types.
+all hardcoded in `game_types.py`. no config files because i hate writing parsers.
+- `POPULATION_SIZE`: enemies per generation (default 5)
+- `MUTATION_RATE_BASE`: how much their brains shuffle each round
+- `ENEMY_CLASS_CONFIG`: base stats for tank/scout types
 
-## Usage
-- **WASD**: move. 
-- **Mouse**: look. 
-- **Left Click/Space**: shoot. 
-- **P**: pause. 
-- **ESC**: menu. 
-- **1-6**: buy upgrades in the shop between rounds.
+## Controls
+| key | action |
+|---|---|
+| WASD | move |
+| mouse | look |
+| left click / space | shoot |
+| P | pause |
+| ESC | menu / quit |
+| 1-6 | buy upgrades in shop |
+
+## Upgrades
+you get credits after each round. spend them between rounds:
+- max health (+scaling cost)
+- speed (+scaling cost)
+- armor (+scaling cost, slows you down)
+- rapid smg (200 cr)
+- heavy shotgun (350 cr)
+- revive one death (500 cr)
+
+## Building binaries
+```bash
+python3 build.py
+```
+builds linux + windows binaries via pyinstaller. windows build requires wine.
+the binary is ~40mb because numpy is bloated.
 
 ## Known Issues
-- pathfinding is basically "walk toward player and pray".
-- enemies sometimes clip into walls. i'm not fixing it today.
-- if you buy a lot of armor, you used to be immortal. i fixed it, you'll still take at least 1 damage.
--Standalone binaries are in the Releases section if you're lazy.
+- enemies clip into walls sometimes. it's a feature now.
+- pathfinding is still "walk toward player and hope".
+- armor reduces damage but rounding sucks so you always take at least 1.
+- the starfield ceiling is cached so it won't kill performance. probably.
+
+## Downloads
+prebuilt binaries in the Releases tab. for the lazy.

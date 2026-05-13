@@ -57,20 +57,47 @@ def _get_gradient_surf(w, h, c1, c2):
     return sf
 
 
+def _get_starfield_ceiling(w, h):
+    k = (w, h, "starfield")
+    if k in _ceiling_cache:
+        return _ceiling_cache[k]
+
+    sf = pygame.Surface((w, h))
+    px = pygame.surfarray.pixels3d(sf)
+    for y in range(h):
+        t = y / max(h - 1, 1)
+        r = int(5 * (1 - t) + 32 * t)
+        g = int(5 * (1 - t) + 12 * t)
+        b = 12
+        px[:, y] = (r, g, b)
+
+    rng = np.random.default_rng(42)
+    for _ in range((w * h) // 200):
+        sx = rng.integers(0, w)
+        sy = rng.integers(0, h)
+        br = int(rng.integers(120, 256))
+        existing = px[sx, sy].astype(np.int32) + br
+        px[sx, sy] = np.clip(existing, 0, 255).astype(np.uint8)
+    del px
+    _ceiling_cache[k] = sf
+    return sf
+
+
 def render_frame(
     surface, game_map, player, enemies, bullets, particles, pickups, flash_a, low_q=False
 ):
     width, height = surface.get_size()
+    half_h = height // 2
 
-    # background gradients. i hope this doesn't lag.
-    c_sf = _get_gradient_surf(width, height // 2, (5, 5, 12), (32, 12, 12))
+    c_sf = _get_starfield_ceiling(width, half_h)
     surface.blit(c_sf, (0, 0))
 
-    f_h = height - height // 2
-    f_sf = _get_gradient_surf(width, f_h, (32, 12, 0), (8, 8, 4))
-    surface.blit(f_sf, (0, height // 2))
+    # floor. just dark and grim. fits the vibe.
+    f_h = height - half_h
+    surface.fill((18, 14, 10), rect=(0, half_h, width, f_h))
 
-    w_px = np.zeros((width, height, 3), dtype=np.uint8)
+    # draw walls straight to the surface pixels. no idea if this is faster.
+    surf_px = pygame.surfarray.pixels3d(surface)
     z_buf = np.full(width, 1000.0, dtype=np.float64)
 
     for x in range(width):
@@ -91,6 +118,11 @@ def render_frame(
         fg = min(1.0, c_dist / 20.0)
         fg_f = 1.0 - fg * 0.75
 
+        # distance fog. hides the ugly walls a bit.
+        fog_factor = min(1.0, c_dist / 12.0) * 0.35
+        fog_col = np.array([50, 10, 5], dtype=np.float64)
+        wall_col = b_col * (1.0 - fog_factor) + fog_col * fog_factor
+
         t_shift = ray["wallType"] * 17
         mx, my = ray["mapX"], ray["mapY"]
 
@@ -100,16 +132,15 @@ def render_frame(
         if ye > ys:
             if not low_q:
                 tc = np.linspace(0, 1, ye - ys)
-                sl = np.sin(tc * 25 + t_shift + mx * 4.1 + my * 2.7) * 0.06
+                sl = np.sin(tc * 20 + t_shift + mx * 3.5 + my * 2.5) * 0.04
                 br = (1.0 - fg * 0.5 + sl) * fg_f
             else:
                 br = np.full(ye - ys, (1.0 - fg * 0.5) * fg_f)
-            
-            br = np.clip(br, 0, 1)
-            w_px[x, ys:ye] = (b_col * br[:, np.newaxis]).astype(np.uint8)
 
-    w_sf = pygame.surfarray.make_surface(w_px)
-    surface.blit(w_sf, (0, 0))
+            br = np.clip(br, 0, 1)
+            surf_px[x, ys:ye] = (wall_col * br[:, np.newaxis]).astype(np.uint8)
+
+    del surf_px
 
     _render_sprites(surface, width, height, player, enemies, bullets, pickups, z_buf)
     _render_particles(surface, width, height, player, particles, z_buf)
@@ -404,6 +435,10 @@ def _render_particles(surface, w, h, player, pt, z_buf):
         
         sz = max(1, int((p.size / c_dist) * h * 0.1))
         alpha = int((p.life / p.maxLife) * 0.8 * 255)
+        glow_sz = sz * 3
+        if glow_sz > sz:
+            glow_alpha = max(1, alpha // 4)
+            pygame.draw.circle(surface, (*p.color, glow_alpha), (bx, h // 2), glow_sz)
         pygame.draw.circle(surface, (*p.color, alpha), (bx, h // 2), sz)
 
 
@@ -412,36 +447,37 @@ def render_hud(sf, player, rnd, score, shooting, flash, punching=False, money=0)
     
     # semi-transparent bars
     b_bg = (20, 20, 25, 160)
-    pygame.draw.rect(sf, b_bg, (15, h - 70, 180, 55), border_radius=4)
-    
+    pygame.draw.rect(sf, b_bg, (15, h - 70, 180, 58), border_radius=4)
+
     hp_r = player.health / player.maxHealth if player.maxHealth > 0 else 0
     hp_c = (0, 255, 100) if hp_r > 0.6 else (255, 200, 0) if hp_r > 0.3 else (255, 50, 0)
-    
+
     pygame.draw.rect(sf, (40, 10, 10), (25, h - 60, 160, 14), border_radius=2)
-    pygame.draw.rect(sf, hp_c, (25, h - 60, int(160 * hp_r), 14), border_radius=2)
-    
+    hp_w = max(1, int(160 * hp_r))
+    pygame.draw.rect(sf, hp_c, (25, h - 60, hp_w, 14), border_radius=2)
+    pygame.draw.rect(sf, (80, 30, 30), (25, h - 60, 160, 14), 1, border_radius=2)
+
     fn = _get_font(22)
-    sf.blit(fn.render(f"VITAL SIGNS: {int(player.health)}%", True, (255, 255, 255)), (25, h - 42))
+    sf.blit(fn.render(f"VITAL SIGNS: {int(player.health)}%", True, (255, 255, 255)), (25, h - 43))
 
     # ammo
     pygame.draw.rect(sf, (20, 20, 10), (25, h - 28, 160, 8), border_radius=1)
     am_r = player.ammo / player.maxAmmo if player.maxAmmo > 0 else 0
-    pygame.draw.rect(sf, (200, 150, 0), (25, h - 28, int(160 * am_r), 8), border_radius=1)
+    pygame.draw.rect(sf, (200, 150, 0), (25, h - 28, max(1, int(160 * am_r)), 8), border_radius=1)
+    pygame.draw.rect(sf, (50, 40, 10), (25, h - 28, 160, 8), 1, border_radius=1)
 
     # right info
-    pygame.draw.rect(sf, b_bg, (w - 200, h - 70, 185, 55), border_radius=4)
+    pygame.draw.rect(sf, b_bg, (w - 200, h - 70, 185, 58), border_radius=4)
     sf.blit(fn.render(f"PHASE {rnd}", True, (255, 100, 0)), (w - 190, h - 62))
-    sf.blit(fn.render(f"CREDITS: {money}", True, (255, 200, 0)), (w - 190, h - 42))
+    sf.blit(fn.render(f"CREDITS: {money}", True, (255, 200, 0)), (w - 190, h - 43))
 
     wn = player.weaponType.upper() if player.weaponType != "default" else "MK-1 PISTOL"
     sf.blit(fn.render(wn, True, (150, 150, 150)), (w - 190, h - 25))
 
-    # crosshair. i swear if i have to align this again...
     cx, cy = w // 2, h // 2
-    cc = (255, 255, 255, 180) if not shooting else (255, 50, 0)
-    pygame.draw.line(sf, cc, (cx - 8, cy), (cx + 8, cy), 1)
-    pygame.draw.line(sf, cc, (cx, cy - 8), (cx, cy + 8), 1)
-    pygame.draw.circle(sf, cc, (cx, cy), 2, 1)
+    cc = (200, 220, 255, 200) if not shooting else (255, 50, 50, 220)
+    pygame.draw.line(sf, cc, (cx - 10, cy), (cx + 10, cy), 1)
+    pygame.draw.line(sf, cc, (cx, cy - 10), (cx, cy + 10), 1)
 
     _draw_weapon(sf, w, h, shooting, flash, punching)
 
@@ -459,11 +495,17 @@ def _draw_weapon(sf, w, h, shooting, flash, punching=False):
         sf.blit(p_sf, (wx - 10, wy - 90 + bb + kb * 0.5))
     else:
         g_sf = pygame.Surface((60, 120), pygame.SRCALPHA)
-        pygame.draw.rect(g_sf, (51, 51, 51), (15, 30, 30, 60))
-        pygame.draw.rect(g_sf, (34, 34, 34), (22, 10, 16, 25))
+        pygame.draw.rect(g_sf, (40, 40, 45), (18, 12, 20, 16))
+        pygame.draw.rect(g_sf, (55, 55, 60), (16, 26, 24, 50))
+        pygame.draw.rect(g_sf, (45, 45, 50), (14, 38, 6, 28))
+        pygame.draw.rect(g_sf, (45, 45, 50), (40, 38, 6, 28))
+        pygame.draw.rect(g_sf, (75, 50, 30), (16, 68, 24, 35))
+        pygame.draw.rect(g_sf, (35, 35, 35), (24, 62, 8, 7))
         if flash > 0:
             al = int(flash * 255)
-            pygame.draw.circle(g_sf, (255, 238, 68, al), (30, 0), 12)
+            pygame.draw.circle(g_sf, (255, 255, 200, al), (29, 0), 14)
+            ga = max(10, al // 3)
+            pygame.draw.circle(g_sf, (255, 200, 50, ga), (29, 0), 22)
         sf.blit(g_sf, (wx - 30, wy - 110 + bb + kb))
 
 

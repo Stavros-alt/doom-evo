@@ -1,6 +1,7 @@
 import os
 import json
 import sys
+import math
 
 try:
     import pygame
@@ -20,7 +21,7 @@ SCREEN_WIDTH = 960
 SCREEN_HEIGHT = 640
 TARGET_FPS = 60
 
-LOW_QUALITY = True
+LOW_QUALITY = False
 INTERNAL_WIDTH = 640
 INTERNAL_HEIGHT = 480
 
@@ -36,7 +37,7 @@ SHOP_ITEMS = {
 def main():
     global SCREEN_WIDTH, SCREEN_HEIGHT
     pygame.init()
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN | pygame.SCALED)
     pygame.display.set_caption("DOOM.EVO")
     clock = pygame.time.Clock()
 
@@ -265,6 +266,10 @@ def _draw_menu(sc, f_l, f_m, f_s):
     for i, text in enumerate(ct):
         c = f_s.render(text, True, (140, 140, 140))
         sc.blit(c, c.get_rect(center=(sc.get_width() // 2, sc.get_height() // 2 + 100 + i * 25)))
+
+    pulse = int((math.sin(pygame.time.get_ticks() * 0.003) + 1) * 60 + 60)
+    pt = f_m.render("SPACE TO START", True, (pulse, pulse, pulse))
+    sc.blit(pt, pt.get_rect(center=(sc.get_width() // 2, sc.get_height() // 2 + 250)))
 
 def _draw_round_end_overlay(sf, f_l, f_m, en):
     ov = pygame.Surface(sf.get_size(), pygame.SRCALPHA)
