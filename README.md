@@ -1,5 +1,5 @@
 # DOOM.EVO
-evolving neural network fps. the enemies learn from your mistakes.
+A tiny FPS where enemies evolve via neural networks. the enemies learn from your mistakes.
 
 ## Overview
 every enemy has a genome driving its neural network. you kill them, the survivors breed, next round is harder. if you're bad they stay bad. it's a dark mirror or whatever.
@@ -59,3 +59,5 @@ the binary is ~40mb because numpy is bloated.
 
 ## Downloads
 prebuilt binaries in the Releases tab. for the lazy.
+
+License: MIT

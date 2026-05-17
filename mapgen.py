@@ -125,13 +125,13 @@ def _count_open_neighbors(cells, cx, cy, rad):
                     cnt += 1
     return cnt
 
-def is_walkable(gm, x, y):
+def is_walkable(gm: GameMap, x: float, y: float) -> bool:
     mx, my = int(x), int(y)
     if mx < 0 or mx >= gm.width or my < 0 or my >= gm.height:
         return False
     return gm.cells[my][mx] == 0
 
-def cast_ray(gm, start_x, start_y, ang):
+def cast_ray(gm: GameMap, start_x: float, start_y: float, ang: float) -> dict:
     ca, sa = math.cos(ang), math.sin(ang)
     mx, my = int(start_x), int(start_y)
     
@@ -175,14 +175,14 @@ def cast_ray(gm, start_x, start_y, ang):
 
     return {"distance": abs(dist), "wallType": wt, "side": side, "mapX": mx, "mapY": my}
 
-def has_line_of_sight(gm, x1, y1, x2, y2):
+def has_line_of_sight(gm: GameMap, x1: float, y1: float, x2: float, y2: float) -> bool:
     # i hope this is fast enough.
     ang = math.atan2(y2 - y1, x2 - x1)
     d = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
     res = cast_ray(gm, x1, y1, ang)
     return res["distance"] >= d - 0.5
 
-def generate_pickup_positions(gm, count, min_d_spawn=8.0, min_d_btwn=4.0):
+def generate_pickup_positions(gm: GameMap, count: int, min_d_spawn: float = 8.0, min_d_btwn: float = 4.0) -> list:
     pos_list = []
     att = 0
     while len(pos_list) < count and att < 500:

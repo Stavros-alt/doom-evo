@@ -15,9 +15,9 @@ def create_network(genome=None):
     for l in range(1, len(layers)):
         layer_weights = []
         layer_biases = []
-        for n in range(layers[l]):
+        for _ in range(layers[l]):
             neuron_weights = []
-            for p in range(layers[l - 1]):
+            for _ in range(layers[l - 1]):
                 neuron_weights.append(
                     g[g_idx] if g_idx < len(g) else random.uniform(-1, 1)
                 )
@@ -34,8 +34,8 @@ def create_network(genome=None):
 def random_genome():
     genome = []
     for l in range(1, len(LAYER_SIZES)):
-        for n in range(LAYER_SIZES[l]):
-            for p in range(LAYER_SIZES[l - 1]):
+        for _ in range(LAYER_SIZES[l]):
+            for _ in range(LAYER_SIZES[l - 1]):
                 genome.append(random.uniform(-1, 1))
             genome.append(random.uniform(-1, 1))
     # attribute genes: health_mult, speed_mult, damage_mult, accuracy_mult (0-1)
